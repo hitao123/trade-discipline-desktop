@@ -1,0 +1,24 @@
+appId: com.local.shouzhuo.discipline
+productName: 守拙交易纪律
+copyright: Copyright © 2026
+asar: true
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: resources/bin/discipline-server
+    to: bin/discipline-server
+directories:
+  output: release
+mac:
+  category: public.app-category.finance
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  identity: null
+dmg:
+  artifactName: 守拙交易纪律-${version}-${arch}.${ext}
+npmRebuild: false

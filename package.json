@@ -1,0 +1,44 @@
+{
+  "name": "trade-discipline-desktop",
+  "description": "macOS 单用户本地交易纪律记录与收盘榜单工作台",
+  "author": "Local User",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build:renderer": "vite build",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build:electron": "node scripts/build-electron.mjs",
+    "build": "pnpm build:backend && pnpm build:renderer && pnpm build:electron",
+    "start": "pnpm build && electron .",
+    "build:mac": "pnpm build && electron-builder --mac dmg --arm64",
+    "smoke:mac": "zsh scripts/smoke-macos.sh",
+    "test:go": "node scripts/test-backend.mjs",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
+    "verify": "pnpm test:go && pnpm test && pnpm typecheck && pnpm build"
+  },
+  "dependencies": {
+    "vue": "^3.5.27",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/vue": "^8.1.0",
+    "@types/node": "^24.10.1",
+    "@vitejs/plugin-vue": "^6.0.2",
+    "@vue/test-utils": "^2.4.6",
+    "@vue/tsconfig": "^0.8.1",
+    "electron": "^37.8.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.10",
+    "jsdom": "^27.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4",
+    "vue-tsc": "^3.2.4"
+  },
+  "packageManager": "pnpm@11.16.0"
+}

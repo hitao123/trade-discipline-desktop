@@ -1,0 +1,9 @@
+packages:
+  - .
+
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+
+confirmModulesPurge: false

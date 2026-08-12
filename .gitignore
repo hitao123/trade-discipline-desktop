@@ -1,0 +1,5 @@
+node_modules/
+.cache/go-build/
+.cache/
+dist/
+release/
