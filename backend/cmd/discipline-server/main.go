@@ -71,7 +71,7 @@ func run() error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	encoded, _ := json.Marshal(readyMessage{Event: "ready", Port: port, SchemaVersion: 1})
+	encoded, _ := json.Marshal(readyMessage{Event: "ready", Port: port, SchemaVersion: store.CurrentSchemaVersion})
 	fmt.Println(string(encoded))
 
 	stop := make(chan os.Signal, 1)

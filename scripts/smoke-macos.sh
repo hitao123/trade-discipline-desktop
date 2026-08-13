@@ -2,8 +2,8 @@
 set -eu
 
 project_dir="${0:A:h:h}"
-app_path="$project_dir/release/mac-arm64/守拙交易纪律.app"
-app_binary="$app_path/Contents/MacOS/守拙交易纪律"
+app_path="$project_dir/release/mac-arm64/Plain Rule.app"
+app_binary="$app_path/Contents/MacOS/Plain Rule"
 smoke_dir="$(mktemp -d /private/tmp/shouzhuo-smoke.XXXXXX)"
 database="$smoke_dir/discipline.db"
 
@@ -31,11 +31,13 @@ fi
 integrity="$(sqlite3 "$database" 'PRAGMA integrity_check;')"
 account_count="$(sqlite3 "$database" 'SELECT count(*) FROM accounts;')"
 rule_count="$(sqlite3 "$database" 'SELECT count(*) FROM rule_versions;')"
+schema_version="$(sqlite3 "$database" 'SELECT max(version) FROM schema_migrations;')"
+history_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('market_daily_bar_observations','market_metric_observations');")"
 kill -TERM "$app_pid" 2>/dev/null || true
 wait "$app_pid" 2>/dev/null || true
 
-if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" ]]; then
-  print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count"
+if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" || "$schema_version" != "2" || "$history_table_count" != "2" ]]; then
+  print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count schema=$schema_version history_tables=$history_table_count"
   exit 1
 fi
 

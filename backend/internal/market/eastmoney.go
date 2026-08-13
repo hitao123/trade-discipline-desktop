@@ -17,9 +17,13 @@ const defaultEastmoneyURL = "https://push2.eastmoney.com/api/qt/clist/get"
 const defaultEastmoneyQuoteURL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 
 type EastmoneyProvider struct {
-	BaseURL  string
-	QuoteURL string
-	Client   *http.Client
+	BaseURL            string
+	QuoteURL           string
+	HistoryURL         string
+	FallbackHistoryURL string
+	DataCenterURL      string
+	Client             *http.Client
+	Now                func() time.Time
 }
 
 type flexibleFloat float64

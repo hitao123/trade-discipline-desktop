@@ -86,7 +86,55 @@ export interface MarketSnapshot {
 export interface MarketResult {
   stock: MarketSnapshot
   etf: MarketSnapshot
+  overview: MarketOverviewResult
   errors?: Record<string, string>
+}
+
+export type MarketRange = '1m' | '3m'
+
+export type MarketMetricKind =
+  | 'ashare_turnover'
+  | 'southbound_net_buy'
+  | 'sh_turnover'
+  | 'sz_turnover'
+  | 'southbound_sh_net_buy'
+  | 'southbound_sz_net_buy'
+
+export interface MarketMetricPoint {
+  tradeDate: string
+  metric: MarketMetricKind
+  valueFen: number
+  source: string
+  sourceTime: string
+}
+
+export interface MarketOverviewResult {
+  range: MarketRange
+  aShareTurnover: MarketMetricPoint[]
+  southboundNetBuy: MarketMetricPoint[]
+  lastSuccessfulAt?: string
+  cached: boolean
+  errors?: Record<string, string>
+}
+
+export interface MarketDailyBar {
+  tradeDate: string
+  market: string
+  code: string
+  closeMinor: number
+  turnoverFen: number
+  source: string
+  sourceTime: string
+}
+
+export interface MarketHistoryResult {
+  market: string
+  code: string
+  range: MarketRange
+  points: MarketDailyBar[]
+  lastSuccessfulAt?: string
+  cached: boolean
+  error?: string
 }
 
 export interface RuleVersion {

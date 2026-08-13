@@ -56,7 +56,7 @@ async function createWindow() {
     height: 860,
     minWidth: 1024,
     minHeight: 680,
-    title: '守拙 · 交易纪律',
+    title: 'Plain Rule',
     backgroundColor: '#f8f6f0',
     show: false,
     webPreferences: {
@@ -64,12 +64,15 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      devTools: !app.isPackaged,
+      devTools: true,
     },
   })
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+    // mainWindow?.webContents.openDevTools({ mode: 'right' })
+  })
   await mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'renderer', 'index.html'))
 }
 
@@ -92,15 +95,15 @@ function registerIPC() {
     return { name: path.basename(filePath), content }
   })
   ipcMain.handle('select-backup', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: '守拙数据库备份', extensions: ['db'] }] })
+    const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Plain Rule Backup', extensions: ['db'] }] })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle('select-export-path', async () => {
-    const result = await dialog.showSaveDialog({ defaultPath: path.join(dataPaths().backups, `discipline-${timestamp()}.db`), filters: [{ name: '守拙数据库备份', extensions: ['db'] }] })
+    const result = await dialog.showSaveDialog({ defaultPath: path.join(dataPaths().backups, `discipline-${timestamp()}.db`), filters: [{ name: 'Plain Rule Backup', extensions: ['db'] }] })
     return result.canceled ? null : (result.filePath ?? null)
   })
   ipcMain.handle('export-backup', async () => {
-    const result = await dialog.showSaveDialog({ defaultPath: path.join(dataPaths().backups, `discipline-${timestamp()}.db`), filters: [{ name: '守拙数据库备份', extensions: ['db'] }] })
+    const result = await dialog.showSaveDialog({ defaultPath: path.join(dataPaths().backups, `discipline-${timestamp()}.db`), filters: [{ name: 'Plain Rule Backup', extensions: ['db'] }] })
     if (result.canceled || !result.filePath) return null
     const destination = result.filePath.endsWith('.db') ? result.filePath : `${result.filePath}.db`
     await apiRequest('/api/backup/export', { path: destination })
@@ -120,7 +123,7 @@ async function restartBackend() {
 }
 
 async function restoreBackup(): Promise<boolean> {
-  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: '守拙数据库备份', extensions: ['db'] }] })
+  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Plain Rule Backup', extensions: ['db'] }] })
   const source = result.filePaths[0]
   if (result.canceled || !source) return false
   await apiRequest('/api/backup/validate', { path: source })
@@ -153,8 +156,9 @@ function timestamp() {
 
 function installMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { role: 'appMenu', submenu: [{ role: 'about', label: '关于守拙' }, { type: 'separator' }, { role: 'quit', label: '退出守拙' }] },
+    { role: 'appMenu', submenu: [{ role: 'about', label: 'About Plain Rule' }, { type: 'separator' }, { role: 'quit', label: 'Quit Plain Rule' }] },
     { label: '编辑', submenu: [{ role: 'undo', label: '撤销' }, { role: 'redo', label: '重做' }, { type: 'separator' }, { role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' }, { role: 'selectAll', label: '全选' }] },
+    { label: '视图', submenu: [{ role: 'reload', label: '重新加载' }, { role: 'forceReload', label: '强制重新加载' }, { type: 'separator' }, { role: 'toggleDevTools', label: '开发者工具' }, { type: 'separator' }, { role: 'resetZoom', label: '实际大小' }, { role: 'zoomIn', label: '放大' }, { role: 'zoomOut', label: '缩小' }, { type: 'separator' }, { role: 'togglefullscreen', label: '全屏' }] },
     { label: '窗口', submenu: [{ role: 'minimize', label: '最小化' }, { role: 'zoom', label: '缩放' }, { role: 'front', label: '前置全部窗口' }] },
   ]))
 }

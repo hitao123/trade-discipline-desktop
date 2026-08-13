@@ -11,6 +11,7 @@ import (
 	"github.com/local/trade-discipline-desktop/backend/internal/market"
 	"github.com/local/trade-discipline-desktop/backend/internal/rules"
 	"github.com/local/trade-discipline-desktop/backend/internal/service"
+	"github.com/local/trade-discipline-desktop/backend/internal/store"
 )
 
 type Router struct {
@@ -34,6 +35,9 @@ func NewRouter(svc *service.Service, token string) http.Handler {
 	mux.HandleFunc("GET /api/audit", router.audit)
 	mux.HandleFunc("POST /api/market/refresh", router.refreshMarket)
 	mux.HandleFunc("GET /api/market/snapshots/latest", router.latestMarket)
+	mux.HandleFunc("GET /api/market/overview", router.marketOverview)
+	mux.HandleFunc("GET /api/market/history", router.marketHistory)
+	mux.HandleFunc("POST /api/market/history/refresh", router.refreshMarketHistory)
 	mux.HandleFunc("POST /api/market/csv/preview", router.previewMarketCSV)
 	mux.HandleFunc("POST /api/market/csv/confirm", router.confirmMarketCSV)
 	mux.HandleFunc("GET /api/reviews/current", router.latestReview)
@@ -53,7 +57,7 @@ func requestLimits(next http.Handler) http.Handler {
 }
 
 func (rt *Router) health(w http.ResponseWriter, _ *http.Request) {
-	writeSuccess(w, http.StatusOK, map[string]any{"status": "ok", "schemaVersion": 1})
+	writeSuccess(w, http.StatusOK, map[string]any{"status": "ok", "schemaVersion": store.CurrentSchemaVersion})
 }
 
 func (rt *Router) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +156,64 @@ func (rt *Router) refreshMarket(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) latestMarket(w http.ResponseWriter, r *http.Request) {
 	data, err := rt.service.LatestMarket(r.Context())
 	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) marketOverview(w http.ResponseWriter, r *http.Request) {
+	rangeName := r.URL.Query().Get("range")
+	if rangeName == "" {
+		rangeName = "3m"
+	}
+	if !validMarketRange(rangeName) {
+		writeFailure(w, http.StatusBadRequest, "INVALID_MARKET_RANGE", "行情范围必须是 1m 或 3m", FieldError{"range": "请选择近 1 个月或近 3 个月"})
+		return
+	}
+	data, err := rt.service.MarketOverview(r.Context(), rangeName)
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) marketHistory(w http.ResponseWriter, r *http.Request) {
+	rangeName := r.URL.Query().Get("range")
+	if rangeName == "" {
+		rangeName = "3m"
+	}
+	key, ok := parseHistoryKey(r.URL.Query().Get("market"), r.URL.Query().Get("code"))
+	if !ok || !validMarketRange(rangeName) {
+		writeFailure(w, http.StatusBadRequest, "INVALID_MARKET_HISTORY", "历史行情参数无效", FieldError{"market": "市场仅支持 SH、SZ 或 HK", "code": "证券代码不能为空", "range": "范围仅支持 1m 或 3m"})
+		return
+	}
+	data, err := rt.service.MarketHistory(r.Context(), key, rangeName)
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) refreshMarketHistory(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Market string `json:"market"`
+		Code   string `json:"code"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_MARKET_HISTORY", "历史行情刷新内容无效", nil)
+		return
+	}
+	key, ok := parseHistoryKey(input.Market, input.Code)
+	if !ok {
+		writeFailure(w, http.StatusBadRequest, "INVALID_MARKET_HISTORY", "历史行情参数无效", FieldError{"market": "市场仅支持 SH、SZ 或 HK", "code": "证券代码不能为空"})
+		return
+	}
+	data, err := rt.service.RefreshMarketHistory(r.Context(), key)
+	writeResult(w, data, err, http.StatusCreated)
+}
+
+func validMarketRange(rangeName string) bool {
+	return rangeName == "1m" || rangeName == "3m"
+}
+
+func parseHistoryKey(marketName, code string) (market.InstrumentKey, bool) {
+	marketName = strings.ToUpper(strings.TrimSpace(marketName))
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if (marketName != "SH" && marketName != "SZ" && marketName != "HK") || code == "" {
+		return market.InstrumentKey{}, false
+	}
+	return market.InstrumentKey{Market: marketName, Code: code}, true
 }
 
 func (rt *Router) previewMarketCSV(w http.ResponseWriter, r *http.Request) {

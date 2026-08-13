@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import logoUrl from '@/assets/logo.svg'
+
 const navigation = [
   { to: '/', label: '今日', index: '01' },
   { to: '/watchlist', label: '观察名单', index: '02' },
@@ -15,10 +17,10 @@ const navigation = [
   <div class="app-shell">
     <aside class="sidebar">
       <header class="brand">
-        <span class="brand__mark">守</span>
+        <img :src="logoUrl" class="brand__mark brand__mark--logo" alt="" />
         <div>
-          <p class="brand__name">守拙</p>
-          <p class="brand__caption">交易纪律工作台</p>
+          <p class="brand__name">Plain Rule</p>
+          <p class="brand__caption">Trading Discipline Workspace</p>
         </div>
       </header>
 

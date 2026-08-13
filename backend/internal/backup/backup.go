@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/local/trade-discipline-desktop/backend/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -67,7 +68,7 @@ func Validate(path string) (Metadata, error) {
 	if err := db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&version); err != nil {
 		return Metadata{}, fmt.Errorf("读取迁移版本失败: %w", err)
 	}
-	if version < 1 || version > 1 {
+	if version < 1 || version > store.CurrentSchemaVersion {
 		return Metadata{}, fmt.Errorf("不支持的数据库版本 %d", version)
 	}
 	return Metadata{SchemaVersion: version, Integrity: integrity, SizeBytes: info.Size()}, nil

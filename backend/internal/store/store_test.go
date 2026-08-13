@@ -65,3 +65,17 @@ func TestMigrationCreatesCompleteLedgerTables(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationAddsAppendOnlyMarketHistorySchema(t *testing.T) {
+	db := openTestStore(t)
+	for _, table := range []string{"market_daily_bar_observations", "market_metric_observations"} {
+		var name string
+		if err := db.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil {
+			t.Fatalf("missing %s: %v", table, err)
+		}
+	}
+	var version int
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 2 {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}

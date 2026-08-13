@@ -30,7 +30,7 @@ func TestCreateAndValidateBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata, err := Validate(destination)
-	if err != nil || metadata.SchemaVersion != 1 {
+	if err != nil || metadata.SchemaVersion != store.CurrentSchemaVersion {
 		t.Fatalf("metadata=%#v err=%v", metadata, err)
 	}
 	if source == destination {

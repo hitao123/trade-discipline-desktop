@@ -65,6 +65,32 @@ var migrationStatements = []string{
 		source_time TEXT,
 		UNIQUE(snapshot_id, rank)
 	)`,
+	`CREATE TABLE IF NOT EXISTS market_daily_bar_observations (
+		id TEXT PRIMARY KEY,
+		market TEXT NOT NULL CHECK(market IN ('HK','SH','SZ')),
+		code TEXT NOT NULL,
+		trade_date TEXT NOT NULL,
+		close_minor INTEGER NOT NULL CHECK(close_minor >= 0),
+		turnover_fen INTEGER NOT NULL CHECK(turnover_fen >= 0),
+		source TEXT NOT NULL,
+		source_time TEXT NOT NULL,
+		fetched_at TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL,
+		UNIQUE(market, code, trade_date, close_minor, turnover_fen, source)
+	)`,
+	`CREATE INDEX IF NOT EXISTS market_daily_bar_latest ON market_daily_bar_observations(market, code, trade_date, fetched_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS market_metric_observations (
+		id TEXT PRIMARY KEY,
+		metric TEXT NOT NULL CHECK(metric IN ('ashare_turnover','southbound_net_buy','sh_turnover','sz_turnover','southbound_sh_net_buy','southbound_sz_net_buy')),
+		trade_date TEXT NOT NULL,
+		value_fen INTEGER NOT NULL,
+		source TEXT NOT NULL,
+		source_time TEXT NOT NULL,
+		fetched_at TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL,
+		UNIQUE(metric, trade_date, value_fen, source)
+	)`,
+	`CREATE INDEX IF NOT EXISTS market_metric_latest ON market_metric_observations(metric, trade_date, fetched_at DESC)`,
 	`CREATE TABLE IF NOT EXISTS watchlist_items (
 		id TEXT PRIMARY KEY,
 		instrument_id TEXT NOT NULL REFERENCES instruments(id),
