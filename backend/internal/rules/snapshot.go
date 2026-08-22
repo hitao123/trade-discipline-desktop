@@ -19,6 +19,7 @@ type Snapshot struct {
 	HKDCNYRateBP               int          `json:"hkdCnyRateBP"`
 	MinimumDisciplineScoreBP   int          `json:"minimumDisciplineScoreBP"`
 	TencentObservationDays     int          `json:"tencentObservationDays"`
+	EnforceTencentSequenceGate bool         `json:"enforceTencentSequenceGate"`
 	NoAddToLosingInstrument    bool         `json:"noAddToLosingInstrument"`
 	NoCrossInstrumentAveraging bool         `json:"noCrossInstrumentAveraging"`
 	ExitCodes                  []string     `json:"exitCodes"`
@@ -38,6 +39,7 @@ func InitialSnapshot() Snapshot {
 		HKDCNYRateBP:               9_500,
 		MinimumDisciplineScoreBP:   9_000,
 		TencentObservationDays:     20,
+		EnforceTencentSequenceGate: false,
 		NoAddToLosingInstrument:    true,
 		NoCrossInstrumentAveraging: true,
 		ExitCodes:                  []string{"T", "B", "R", "C"},

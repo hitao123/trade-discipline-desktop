@@ -33,11 +33,14 @@ account_count="$(sqlite3 "$database" 'SELECT count(*) FROM accounts;')"
 rule_count="$(sqlite3 "$database" 'SELECT count(*) FROM rule_versions;')"
 schema_version="$(sqlite3 "$database" 'SELECT max(version) FROM schema_migrations;')"
 history_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('market_daily_bar_observations','market_metric_observations');")"
+discipline_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('pre_trade_confirmations','price_alert_events','position_review_events');")"
+allocation_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('allocation_profiles','allocation_versions','allocation_value_events');")"
+refresh_status_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='market_refresh_status';")"
 kill -TERM "$app_pid" 2>/dev/null || true
 wait "$app_pid" 2>/dev/null || true
 
-if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" || "$schema_version" != "2" || "$history_table_count" != "2" ]]; then
-  print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count schema=$schema_version history_tables=$history_table_count"
+if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" || "$schema_version" != "5" || "$history_table_count" != "2" || "$discipline_table_count" != "3" || "$allocation_table_count" != "3" || "$refresh_status_table_count" != "1" ]]; then
+	print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count schema=$schema_version history_tables=$history_table_count discipline_tables=$discipline_table_count allocation_tables=$allocation_table_count refresh_status_tables=$refresh_status_table_count"
   exit 1
 fi
 

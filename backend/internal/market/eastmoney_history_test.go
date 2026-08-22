@@ -208,6 +208,34 @@ func TestFetchMarketMetricsCombinesShanghaiShenzhenAndSouthboundChannels(t *test
 	}
 }
 
+func TestFetchMarketMetricsFallsBackToSinaIndexTurnover(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sina" {
+			_, _ = w.Write([]byte("var hq_str_sh000001=\"上证指数,0,0,0,0,0,0,0,0,700000000000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-08-21,15:00:00,00,\";\nvar hq_str_sz399106=\"深证成指,0,0,0,0,0,0,0,0,800000000000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-08-21,15:00:00,00\";"))
+			return
+		}
+		if strings.Contains(r.URL.Query().Get("filter"), `MUTUAL_TYPE="002"`) || strings.Contains(r.URL.Query().Get("filter"), `MUTUAL_TYPE="004"`) {
+			_, _ = w.Write([]byte(`{"result":{"data":[{"TRADE_DATE":"2026-08-21 00:00:00","NET_DEAL_AMT":0}]}}`))
+			return
+		}
+		w.Header().Set("Connection", "close")
+	}))
+	defer server.Close()
+	provider := EastmoneyProvider{HistoryURL: server.URL, DataCenterURL: server.URL, SinaMetricsURL: server.URL + "/sina", Client: server.Client()}
+
+	batch := provider.FetchMarketMetrics(context.Background(), 120)
+	if batch.Errors[MetricSHTurnover] != "" || batch.Errors[MetricSZTurnover] != "" || batch.Errors[MetricAShareTurnover] != "" {
+		t.Fatalf("turnover fallback errors: %#v", batch.Errors)
+	}
+	values := make(map[MetricKind]int64)
+	for _, point := range batch.Points {
+		values[point.Metric] = point.ValueFen
+	}
+	if values[MetricAShareTurnover] != 150_000_000_000_000 {
+		t.Fatalf("A-share turnover=%d points=%#v", values[MetricAShareTurnover], batch.Points)
+	}
+}
+
 func TestFetchDailyBarsDropsCurrentAShareSessionBeforeClose(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"klines":["2026-08-11,0,10.00,0,0,0,1000000","2026-08-12,0,10.20,0,0,0,2000000"]}}`))

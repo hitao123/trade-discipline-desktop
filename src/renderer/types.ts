@@ -47,6 +47,33 @@ export interface Portfolio {
   disciplineScoreBP: number
 }
 
+export type MonitorInterval = 'off' | '10m' | '15m' | '30m'
+
+export interface MonitorSettings {
+  interval: MonitorInterval
+}
+
+export interface MonitorStatus {
+  enabled: boolean
+  interval: MonitorInterval
+  lastAttemptAt?: string
+  lastSuccessfulAt?: string
+  lastError?: string
+}
+
+export interface PriceAlert {
+  id: string
+  planId: string
+  instrumentId: string
+  kind: 'risk_exit' | 'target_zone'
+  triggerPriceMinor: number
+  thresholdMinor: number
+  source: string
+  sourceTime: string
+  triggeredAt: string
+  notifiedAt?: string
+}
+
 export interface Dashboard {
   initialCapitalFen: number
   portfolio: Portfolio
@@ -74,20 +101,34 @@ export interface MarketQuote {
 }
 
 export interface MarketSnapshot {
-  id: string
-  tradeDate: string
-  kind: 'stock' | 'etf'
+	id: string
+	tradeDate: string
+	kind: 'stock' | 'etf'
+	mode?: 'close' | 'live'
   source: string
   fetchedAt: string
   version: number
   entries: MarketQuote[]
 }
 
+export interface MarketRefreshStatus {
+	mode: 'close' | 'live'
+	lastAttemptAt?: string
+	lastSuccessfulAt?: string
+	errors?: Record<string, string>
+}
+
 export interface MarketResult {
   stock: MarketSnapshot
   etf: MarketSnapshot
   overview: MarketOverviewResult
-  errors?: Record<string, string>
+	errors?: Record<string, string>
+	status?: MarketRefreshStatus
+}
+
+export interface LiveMarketResult extends MarketResult {
+	isLive: boolean
+	state: 'live' | 'market_closed'
 }
 
 export type MarketRange = '1m' | '3m'
@@ -145,7 +186,67 @@ export interface RuleVersion {
     lossCautionFen: number
     lossRedLineFen: number
     chinaTechLimitFen: number
+    enforceTencentSequenceGate?: boolean
+    tencentObservationDays?: number
+    minimumDisciplineScoreBP?: number
   }
   reason: string
   createdAt: string
+}
+
+export interface AllocationItem {
+  key: string
+  name: string
+  targetWeightBP: number
+  targetShares: number
+  buyRule: string
+  sellRule: string
+  note: string
+}
+
+export interface AllocationDraft {
+  initialCapitalFen: number
+  targetReturnBP: number
+  targetDeadline: string
+  items: AllocationItem[]
+}
+
+export interface AllocationVersion {
+  id: string
+  profileId: string
+  version: number
+  draft: AllocationDraft
+  reason: string
+  createdAt: string
+}
+
+export interface AllocationValueEvent {
+  id: string
+  profileId?: string
+  itemKey: string
+  valueFen: number
+  source: 'initial_import' | 'manual'
+  observedAt: string
+  createdAt: string
+}
+
+export interface AllocationItemProgress {
+  item: AllocationItem
+  currentValueFen: number
+  currentWeightBP: number
+  buildTargetFen: number
+  buildGapFen: number
+  rebalanceTargetFen: number
+  rebalanceGapFen: number
+  latestValueRecorded?: AllocationValueEvent
+}
+
+export interface AllocationOverview {
+  profileId: string
+  version: AllocationVersion
+  currentTotalFen: number
+  targetTotalFen: number
+  returnBP: number
+  goalGapFen: number
+  items: AllocationItemProgress[]
 }

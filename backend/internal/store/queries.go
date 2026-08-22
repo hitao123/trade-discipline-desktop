@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/local/trade-discipline-desktop/backend/internal/market"
 )
 
 func (s *Store) DisciplineProgress(ctx context.Context, now time.Time) (int, int, error) {
@@ -136,4 +138,29 @@ func (s *Store) LatestQuotes(ctx context.Context) (map[string]LatestQuoteRow, er
 		quotes[quote.InstrumentID] = quote
 	}
 	return quotes, rows.Err()
+}
+
+func (s *Store) LatestQualifiedBuyPlanID(ctx context.Context, instrumentID string) (string, error) {
+	var planID string
+	err := s.db.QueryRowContext(ctx, `SELECT e.plan_id FROM execution_events e
+		JOIN trade_plans p ON p.id=e.plan_id
+		WHERE e.instrument_id=? AND e.event_type='buy' AND e.plan_id IS NOT NULL AND p.status='qualified'
+		AND NOT EXISTS (SELECT 1 FROM execution_events reversal WHERE reversal.original_event_id=e.id AND reversal.event_type='reversal')
+		ORDER BY e.executed_at DESC, e.created_at DESC LIMIT 1`, instrumentID).Scan(&planID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load latest qualified buy plan: %w", err)
+	}
+	return planID, nil
+}
+
+func (s *Store) InstrumentKey(ctx context.Context, instrumentID string) (market.InstrumentKey, error) {
+	var key market.InstrumentKey
+	err := s.db.QueryRowContext(ctx, `SELECT market, code FROM instruments WHERE id=? AND status='active'`, instrumentID).Scan(&key.Market, &key.Code)
+	if err != nil {
+		return market.InstrumentKey{}, fmt.Errorf("load instrument key: %w", err)
+	}
+	return key, nil
 }

@@ -12,4 +12,9 @@ contextBridge.exposeInMainWorld('discipline', {
   restoreBackup: () => ipcRenderer.invoke('restore-backup'),
   restartBackend: () => ipcRenderer.invoke('restart-backend'),
   openLogs: () => ipcRenderer.invoke('open-logs'),
+  onMonitorAlert: (handler: (alertID: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, alertID: string) => handler(alertID)
+    ipcRenderer.on('monitor-alert-opened', listener)
+    return () => ipcRenderer.removeListener('monitor-alert-opened', listener)
+  },
 })

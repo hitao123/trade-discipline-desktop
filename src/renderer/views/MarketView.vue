@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import InstrumentHistoryPanel from '@/renderer/components/market/InstrumentHistoryPanel.vue'
@@ -15,20 +15,47 @@ const {
   history,
   selected,
   tab,
+  mode,
   range,
   busy,
   historyBusy,
   error,
   notice,
   activeSnapshot,
+  activeStatus,
   selectedKey,
   load,
   refreshAll,
+  refreshLive,
   selectHistory,
   refreshSelected,
   setRange,
   setTab,
+  setMode,
 } = useMarketHistory()
+
+const isLiveMode = computed(() => mode.value === 'live')
+const pageCopy = computed(() => isLiveMode.value
+  ? {
+      eyebrow: 'LIVE TURNOVER',
+      title: '交易时段内再观察',
+      description: '仅在 A 股交易时段按需读取公开成交额排行；不自动轮询、不连接券商，也不会发出交易指令。',
+      action: '刷新实时数据',
+    }
+  : {
+      eyebrow: 'CLOSE RANKING',
+      title: '收盘后再筛选',
+      description: '榜单、市场成交额和南向资金只在刷新时获取并保存在本机；榜单仍只能进入观察名单。',
+      action: '刷新收盘数据',
+    })
+
+const statusMessage = computed(() => {
+  const status = activeStatus.value
+  const errors = Object.values(status?.errors ?? {})
+  if (errors.length > 0) return '最近刷新异常：' + errors.join('；')
+  if (status?.lastSuccessfulAt) return '最近成功刷新 ' + new Date(status.lastSuccessfulAt).toLocaleString('zh-CN', { hour12: false })
+  return '尚未手动刷新'
+})
 
 async function addWatch(quote: MarketQuote) {
   try {
@@ -54,19 +81,27 @@ onMounted(load)
 <template>
   <div>
     <PageHeader
-      eyebrow="CLOSE RANKING"
-      title="收盘后再筛选"
-      description="榜单、市场成交额和南向资金只在刷新时获取并保存在本机；榜单仍只能进入观察名单。"
+      :eyebrow="pageCopy.eyebrow"
+      :title="pageCopy.title"
+      :description="pageCopy.description"
     >
-      <button class="button" type="button" :disabled="busy" @click="refreshAll">
-        {{ busy ? '刷新中…' : '刷新收盘数据' }}
+      <button class="button" type="button" :disabled="busy" @click="isLiveMode ? refreshLive() : refreshAll()">
+        {{ busy ? '刷新中…' : pageCopy.action }}
       </button>
     </PageHeader>
 
     <ErrorNotice :message="error" />
     <p v-if="notice" class="success-notice" role="status">{{ notice }}</p>
 
+    <div class="mode-tabs" role="tablist" aria-label="数据时段">
+      <button type="button" :class="{ active: mode === 'close' }" @click="setMode('close')">收盘榜单</button>
+      <button type="button" :class="{ active: mode === 'live' }" @click="setMode('live')">实时成交</button>
+    </div>
+
+    <p v-if="isLiveMode" class="live-note">实时成交额仅在 A 股连续竞价时段可更新。休市、午休和周末会显示最近一次本地快照。</p>
+
     <MarketOverviewPanel
+      v-if="!isLiveMode"
       :overview="overview"
       :range="range"
       :loading="busy"
@@ -85,6 +120,7 @@ onMounted(load)
     <div class="snapshot-meta">
       <span>交易日 {{ activeSnapshot?.tradeDate || '—' }}</span>
       <span>来源 {{ activeSnapshot?.source || '—' }}</span>
+      <span>{{ statusMessage }}</span>
       <span>版本 {{ activeSnapshot?.version || '—' }}</span>
     </div>
 
@@ -107,6 +143,7 @@ onMounted(load)
 </template>
 
 <style scoped>
+.mode-tabs,
 .tabs {
   display: flex;
   gap: 20px;
@@ -114,6 +151,7 @@ onMounted(load)
   border-bottom: 1px solid var(--line);
 }
 
+.mode-tabs button,
 .tabs button {
   padding: 10px 1px;
   color: var(--ink-faint);
@@ -123,10 +161,15 @@ onMounted(load)
   cursor: pointer;
 }
 
+.mode-tabs button.active,
 .tabs button.active {
   color: var(--ink);
   border-bottom-color: var(--accent);
   font-weight: 700;
+}
+
+.mode-tabs {
+  margin-bottom: 26px;
 }
 
 .snapshot-meta {
@@ -140,6 +183,12 @@ onMounted(load)
 
 .success-notice {
   color: #506448;
+  font-size: 13px;
+}
+
+.live-note {
+  margin: 0 0 16px;
+  color: var(--ink-faint);
   font-size: 13px;
 }
 </style>

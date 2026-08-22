@@ -20,7 +20,9 @@ func openExecutionService(t *testing.T) *Service {
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return New(db, func() time.Time { return time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC) })
+	svc := New(db, func() time.Time { return time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC) })
+	svc.SetMarketRankingFallback(fakeMarketProvider{})
+	return svc
 }
 
 func TestPortfolioUsesLatestHKCloseWithConservativeRMBRate(t *testing.T) {

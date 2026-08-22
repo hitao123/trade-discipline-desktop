@@ -13,6 +13,7 @@ declare global {
       restoreBackup: () => Promise<boolean>
       restartBackend: () => Promise<void>
       openLogs: () => Promise<void>
+      onMonitorAlert: (handler: (alertID: string) => void) => () => void
     }
   }
 }

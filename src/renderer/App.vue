@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+
 import logoUrl from '@/assets/logo.svg'
 
 const navigation = [
@@ -7,10 +10,20 @@ const navigation = [
   { to: '/plans', label: '交易计划', index: '03' },
   { to: '/executions', label: '成交补录', index: '04' },
   { to: '/positions', label: '持仓', index: '05' },
-  { to: '/market', label: '市场榜单', index: '06' },
-  { to: '/reviews', label: '每周复盘', index: '07' },
-  { to: '/settings', label: '规则与设置', index: '08' },
+  { to: '/allocation', label: '资产配置', index: '06' },
+  { to: '/market', label: '市场榜单', index: '07' },
+  { to: '/reviews', label: '每周复盘', index: '08' },
+  { to: '/settings', label: '规则与设置', index: '09' },
 ]
+
+const router = useRouter()
+let removeMonitorAlertListener: (() => void) | undefined
+
+onMounted(() => {
+  removeMonitorAlertListener = window.discipline?.onMonitorAlert(() => { void router.push('/positions') })
+})
+
+onBeforeUnmount(() => removeMonitorAlertListener?.())
 </script>
 
 <template>

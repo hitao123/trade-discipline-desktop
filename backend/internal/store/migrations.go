@@ -43,11 +43,18 @@ var migrationStatements = []string{
 		id TEXT PRIMARY KEY,
 		trade_date TEXT NOT NULL,
 		ranking_kind TEXT NOT NULL CHECK(ranking_kind IN ('stock','etf')),
+		snapshot_mode TEXT NOT NULL DEFAULT 'close' CHECK(snapshot_mode IN ('close','live')),
 		source TEXT NOT NULL,
 		fetched_at TEXT NOT NULL,
 		status TEXT NOT NULL,
 		version INTEGER NOT NULL,
 		UNIQUE(trade_date, ranking_kind, version)
+	)`,
+	`CREATE TABLE IF NOT EXISTS market_refresh_status (
+		snapshot_mode TEXT PRIMARY KEY CHECK(snapshot_mode IN ('close','live')),
+		last_attempt_at TEXT NOT NULL,
+		last_success_at TEXT,
+		errors_json TEXT NOT NULL CHECK(json_valid(errors_json))
 	)`,
 	`CREATE TABLE IF NOT EXISTS market_rank_entries (
 		id TEXT PRIMARY KEY,
@@ -195,4 +202,58 @@ var migrationStatements = []string{
 		value_json TEXT NOT NULL CHECK(json_valid(value_json)),
 		updated_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS pre_trade_confirmations (
+		id TEXT PRIMARY KEY,
+		plan_id TEXT NOT NULL REFERENCES trade_plans(id),
+		plan_snapshot_json TEXT NOT NULL CHECK(json_valid(plan_snapshot_json)),
+		started_at TEXT NOT NULL,
+		confirmed_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS pre_trade_plan_time ON pre_trade_confirmations(plan_id, confirmed_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS price_alert_events (
+		id TEXT PRIMARY KEY,
+		plan_id TEXT NOT NULL REFERENCES trade_plans(id),
+		instrument_id TEXT NOT NULL REFERENCES instruments(id),
+		kind TEXT NOT NULL CHECK(kind IN ('risk_exit','target_zone')),
+		trigger_price_minor INTEGER NOT NULL,
+		threshold_minor INTEGER NOT NULL,
+		plan_snapshot_json TEXT NOT NULL CHECK(json_valid(plan_snapshot_json)),
+		source TEXT NOT NULL,
+		source_time TEXT NOT NULL,
+		triggered_at TEXT NOT NULL,
+		notified_at TEXT
+	)`,
+	`CREATE INDEX IF NOT EXISTS price_alert_open ON price_alert_events(notified_at, triggered_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS price_alert_instrument_kind ON price_alert_events(instrument_id, kind, triggered_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS position_review_events (
+		id TEXT PRIMARY KEY,
+		alert_id TEXT NOT NULL UNIQUE REFERENCES price_alert_events(id),
+		decision TEXT NOT NULL CHECK(decision IN ('hold','trim','sell','wait')),
+		reason TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS allocation_profiles (
+		id TEXT PRIMARY KEY,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS allocation_versions (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL REFERENCES allocation_profiles(id),
+		version INTEGER NOT NULL,
+		draft_json TEXT NOT NULL CHECK(json_valid(draft_json)),
+		change_reason TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		previous_id TEXT REFERENCES allocation_versions(id),
+		UNIQUE(profile_id, version)
+	)`,
+	`CREATE TABLE IF NOT EXISTS allocation_value_events (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL REFERENCES allocation_profiles(id),
+		item_key TEXT NOT NULL,
+		value_fen INTEGER NOT NULL CHECK(value_fen >= 0),
+		source TEXT NOT NULL CHECK(source IN ('initial_import','manual')),
+		observed_at TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS allocation_value_latest ON allocation_value_events(profile_id, item_key, observed_at DESC, created_at DESC)`,
 }

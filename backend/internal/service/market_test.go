@@ -21,6 +21,45 @@ type fakeMarketProvider struct {
 	etfErr    error
 	dailyErr  error
 	quotesErr error
+	seenKeys  *[]market.InstrumentKey
+}
+
+func TestRefreshMarketUsesFallbackAndPersistsSuccessStatus(t *testing.T) {
+	svc := openExecutionService(t)
+	svc.SetMarketProvider(fakeMarketProvider{stockErr: errors.New("eastmoney EOF"), etfErr: errors.New("eastmoney EOF")})
+	svc.SetMarketRankingFallback(fakeMarketProvider{
+		stock: []market.Quote{{TradeDate: "2026-08-12", Market: "SZ", Code: "300308", Name: "中际旭创", AssetType: market.KindStock, CloseMinor: 94_300, TurnoverFen: 2_600_000_000, Source: "sina-public-ranking"}},
+		etf:   []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "510300", Name: "沪深300ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 800_000_000, Source: "sina-public-ranking"}},
+	})
+	result, err := svc.RefreshMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stock.Source != "sina-public-ranking" || result.ETF.Source != "sina-public-ranking" || result.Errors["stock"] != "" || result.Status.LastSuccessfulAt == nil {
+		t.Fatalf("fallback result=%#v", result)
+	}
+}
+
+func TestRefreshLiveMarketDoesNotFetchOutsideTradingSession(t *testing.T) {
+	svc := openExecutionService(t)
+	called := false
+	svc.SetMarketRankingFallback(rankingProviderFunc(func(_ context.Context, _ market.RankingKind) ([]market.Quote, error) {
+		called = true
+		return nil, nil
+	}))
+	result, err := svc.RefreshLiveMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called || result.IsLive || result.State != "market_closed" {
+		t.Fatalf("unexpected closed-market result=%#v called=%v", result, called)
+	}
+}
+
+type rankingProviderFunc func(context.Context, market.RankingKind) ([]market.Quote, error)
+
+func (f rankingProviderFunc) FetchRankings(ctx context.Context, kind market.RankingKind) ([]market.Quote, error) {
+	return f(ctx, kind)
 }
 
 func (p fakeMarketProvider) FetchRankings(_ context.Context, kind market.RankingKind) ([]market.Quote, error) {
@@ -60,7 +99,10 @@ func TestRefreshMarketKeepsLatestSuccessfulKindOnPartialFailure(t *testing.T) {
 	}
 }
 
-func (p fakeMarketProvider) FetchQuotes(_ context.Context, _ []market.InstrumentKey) ([]market.Quote, error) {
+func (p fakeMarketProvider) FetchQuotes(_ context.Context, keys []market.InstrumentKey) ([]market.Quote, error) {
+	if p.seenKeys != nil {
+		*p.seenKeys = append(*p.seenKeys, keys...)
+	}
 	return p.quotes, p.quotesErr
 }
 
@@ -87,7 +129,7 @@ func TestRefreshMarketStillRefreshesOverviewWhenQuoteUpdateFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Errors["quotes"] == "" || len(result.Overview.AShareTurnover) != 1 {
+	if result.Errors["quotes"] != "持仓参考报价暂未更新（东方财富公开接口临时不可用；已保留最近一次成功报价）" || len(result.Overview.AShareTurnover) != 1 {
 		t.Fatalf("overview was skipped after quote error: %#v", result)
 	}
 }

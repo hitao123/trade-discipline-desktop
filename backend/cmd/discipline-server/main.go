@@ -64,8 +64,12 @@ func run() error {
 		return fmt.Errorf("listen loopback: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
+	svc := service.New(db, nil)
+	monitorCtx, cancelMonitor := context.WithCancel(context.Background())
+	defer cancelMonitor()
+	svc.StartMonitor(monitorCtx)
 	server := &http.Server{
-		Handler:           api.NewRouter(service.New(db, nil), token),
+		Handler:           api.NewRouter(svc, token),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

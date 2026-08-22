@@ -4,7 +4,7 @@ import { computed, reactive, watch } from 'vue'
 import { dateTimeLocal } from '@/renderer/lib/format'
 import type { Instrument } from '@/renderer/types'
 
-const props = defineProps<{ instruments: Instrument[]; busy: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string }>()
+const props = defineProps<{ instruments: Instrument[]; busy: boolean; submitDisabled?: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string }>()
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>] }>()
 
 const now = new Date()
@@ -12,11 +12,19 @@ const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
 const form = reactive({
   instrumentId: '', thesis: '', falsification: '', pricedExpectation: '', evidence1: '', evidence2: '',
   breakCondition: '', exitCondition: '', entryLow: 0, entryHigh: 0, riskExit: 0, quantity: 100,
+  targetExitLow: 0, targetExitHigh: 0,
   estimatedCost: 0, maxPlanLoss: 0, stressDrop: 30, fearScore: 0, greedScore: 0, revengeScore: 0,
   referencePriceAt: dateTimeLocal(now), validUntil: dateTimeLocal(nextWeek),
 })
 
 const selected = computed(() => props.instruments.find(item => item.id === form.instrumentId))
+const quantityError = computed(() => {
+  const lotSize = selected.value?.lotSize ?? 100
+  const quantity = Number(form.quantity)
+  return Number.isInteger(quantity) && quantity > 0 && quantity % lotSize === 0
+    ? ''
+    : `必须是 ${lotSize} 的整数倍`
+})
 
 watch(() => props.instruments, (instruments) => {
   const preferred = instruments.find(item => item.code === '9988.HK') ?? instruments[0]
@@ -27,10 +35,10 @@ watch(selected, (instrument) => {
   if (!instrument) return
   form.quantity = instrument.lotSize
   if (instrument.code === '9988.HK') {
-    form.entryLow = 110; form.entryHigh = 120; form.riskExit = 90; form.estimatedCost = 12_000; form.maxPlanLoss = 3_600
+    form.entryLow = 110; form.entryHigh = 120; form.riskExit = 90; form.targetExitLow = 130; form.targetExitHigh = 140; form.estimatedCost = 12_000; form.maxPlanLoss = 3_600
   }
   else if (instrument.code === '0700.HK') {
-    form.entryLow = 440; form.entryHigh = 480; form.riskExit = 360; form.estimatedCost = 48_000; form.maxPlanLoss = 14_400
+    form.entryLow = 440; form.entryHigh = 480; form.riskExit = 360; form.targetExitLow = 520; form.targetExitHigh = 600; form.estimatedCost = 48_000; form.maxPlanLoss = 14_400
   }
 }, { immediate: true })
 
@@ -48,6 +56,8 @@ watch(() => props.initialDraft, (draft) => {
   form.entryLow = Number(draft.entryLowMinor ?? 0) / 100
   form.entryHigh = Number(draft.entryHighMinor ?? 0) / 100
   form.riskExit = Number(draft.riskExitMinor ?? 0) / 100
+  form.targetExitLow = Number(draft.targetExitLowMinor ?? 0) / 100
+  form.targetExitHigh = Number(draft.targetExitHighMinor ?? 0) / 100
   form.quantity = Number(draft.quantity ?? 100)
   form.estimatedCost = Number(draft.estimatedCostFen ?? 0) / 100
   form.maxPlanLoss = Number(draft.maxPlanLossFen ?? 0) / 100
@@ -71,6 +81,8 @@ function submit() {
     entryLowMinor: Math.round(form.entryLow * 100),
     entryHighMinor: Math.round(form.entryHigh * 100),
     riskExitMinor: Math.round(form.riskExit * 100),
+    targetExitLowMinor: Math.round(form.targetExitLow * 100),
+    targetExitHighMinor: Math.round(form.targetExitHigh * 100),
     quantity: Number(form.quantity),
     estimatedCostFen: Math.round(form.estimatedCost * 100),
     maxPlanLossFen: Math.round(form.maxPlanLoss * 100),
@@ -109,8 +121,12 @@ function submit() {
         <label class="field"><span>买入上限（本币）</span><input v-model.number="form.entryHigh" type="number" min="0" step="0.01" required /></label>
         <label class="field"><span>风险退出价（本币）</span><input v-model.number="form.riskExit" type="number" min="0" step="0.01" required /></label>
       </div>
+      <div class="field-grid">
+        <label class="field"><span>目标退出下限（本币）</span><input v-model.number="form.targetExitLow" type="number" min="0" step="0.01" /><small class="field__hint">可选；填写后需同时填写上限</small></label>
+        <label class="field"><span>目标退出上限（本币）</span><input v-model.number="form.targetExitHigh" type="number" min="0" step="0.01" /><small class="field__hint">进入该区间时提醒你复核</small></label>
+      </div>
       <div class="field-grid field-grid--three">
-        <label class="field"><span>计划股数</span><input v-model.number="form.quantity" aria-label="计划股数" type="number" min="1" step="1" required /><small>必须是 {{ selected?.lotSize ?? 100 }} 的整数倍</small></label>
+        <label class="field"><span>计划股数</span><input v-model.number="form.quantity" aria-label="计划股数" :aria-invalid="quantityError ? 'true' : 'false'" type="number" min="1" step="1" required /><small v-if="quantityError" role="alert">{{ quantityError }}</small><small v-else class="field__hint">每手 {{ selected?.lotSize ?? 100 }} 股</small></label>
         <label class="field"><span>预计人民币资金（元）</span><input v-model.number="form.estimatedCost" type="number" min="0" step="0.01" required /></label>
         <label class="field"><span>最大计划损失（元）</span><input v-model.number="form.maxPlanLoss" type="number" min="0" step="0.01" required /></label>
       </div>
@@ -130,7 +146,7 @@ function submit() {
       </div>
     </fieldset>
 
-    <button class="button button--primary" type="submit" :disabled="busy">{{ busy ? '正在校验…' : (submitLabel ?? '保存并校验') }}</button>
+    <button class="button button--primary" type="submit" :disabled="busy || submitDisabled">{{ busy ? '正在校验…' : (submitLabel ?? '保存并校验') }}</button>
   </form>
 </template>
 
@@ -141,4 +157,5 @@ legend { padding: 0 8px; color: var(--ink-muted); font-size: 12px; font-weight: 
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .field-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field small { min-height: 14px; color: var(--accent); }
+.field .field__hint { color: var(--ink-faint); }
 </style>

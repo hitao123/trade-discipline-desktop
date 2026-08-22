@@ -238,6 +238,11 @@ func (p *EastmoneyProvider) FetchMarketMetrics(ctx context.Context, limit int) M
 		byMetric[result.metric] = result.points
 		batch.Points = append(batch.Points, result.points...)
 	}
+	if _, shFailed := batch.Errors[MetricSHTurnover]; shFailed {
+		p.applySinaTurnoverFallback(ctx, &batch, byMetric)
+	} else if _, szFailed := batch.Errors[MetricSZTurnover]; szFailed {
+		p.applySinaTurnoverFallback(ctx, &batch, byMetric)
+	}
 	if _, failed := batch.Errors[MetricSHTurnover]; !failed {
 		if _, failed := batch.Errors[MetricSZTurnover]; !failed {
 			batch.Points = append(batch.Points, combineMetricPoints(byMetric[MetricSHTurnover], byMetric[MetricSZTurnover], MetricAShareTurnover)...)
@@ -258,6 +263,33 @@ func (p *EastmoneyProvider) FetchMarketMetrics(ctx context.Context, limit int) M
 		return batch.Points[i].TradeDate < batch.Points[j].TradeDate
 	})
 	return batch
+}
+
+func (p *EastmoneyProvider) applySinaTurnoverFallback(ctx context.Context, batch *MetricBatch, byMetric map[MetricKind][]MetricPoint) {
+	fallback := (SinaProvider{IndexMetricsURL: p.SinaMetricsURL, Client: p.Client}).FetchAShareTurnoverMetrics(ctx)
+	if len(fallback.Errors) > 0 {
+		for metric, message := range fallback.Errors {
+			if original := batch.Errors[metric]; original != "" {
+				batch.Errors[metric] = fmt.Sprintf("主来源失败；备用来源失败：%s", message)
+			}
+		}
+		return
+	}
+	filtered := batch.Points[:0]
+	for _, point := range batch.Points {
+		if point.Metric != MetricSHTurnover && point.Metric != MetricSZTurnover {
+			filtered = append(filtered, point)
+		}
+	}
+	batch.Points = filtered
+	for _, point := range fallback.Points {
+		switch point.Metric {
+		case MetricSHTurnover, MetricSZTurnover:
+			byMetric[point.Metric] = []MetricPoint{point}
+			batch.Points = append(batch.Points, point)
+			delete(batch.Errors, point.Metric)
+		}
+	}
 }
 
 func (p *EastmoneyProvider) fetchSouthboundChannel(ctx context.Context, mutualType string, metric MetricKind, limit int) ([]MetricPoint, error) {

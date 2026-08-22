@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/local/trade-discipline-desktop/backend/internal/domain"
 	"github.com/local/trade-discipline-desktop/backend/internal/market"
@@ -27,14 +28,31 @@ func NewRouter(svc *service.Service, token string) http.Handler {
 	mux.HandleFunc("GET /api/plans", router.listPlans)
 	mux.HandleFunc("POST /api/plans", router.createPlan)
 	mux.HandleFunc("PUT /api/plans/{id}", router.revisePlan)
+	mux.HandleFunc("POST /api/plans/{id}/pre-trade-confirmations", router.createPreTradeConfirmation)
+	mux.HandleFunc("GET /api/plans/{id}/pre-trade-confirmations/latest", router.latestPreTradeConfirmation)
 	mux.HandleFunc("POST /api/executions", router.createExecution)
 	mux.HandleFunc("POST /api/executions/{id}/reverse", router.reverseExecution)
 	mux.HandleFunc("GET /api/portfolio", router.portfolio)
+	mux.HandleFunc("GET /api/allocation", router.allocation)
+	mux.HandleFunc("PUT /api/allocation", router.reviseAllocation)
+	mux.HandleFunc("GET /api/allocation/versions", router.allocationVersions)
+	mux.HandleFunc("GET /api/allocation/items/{key}/value-events", router.allocationValueEvents)
+	mux.HandleFunc("POST /api/allocation/items/{key}/value-events", router.recordAllocationValue)
+	mux.HandleFunc("GET /api/monitor/status", router.monitorStatus)
+	mux.HandleFunc("GET /api/monitor/settings", router.monitorSettings)
+	mux.HandleFunc("PUT /api/monitor/settings", router.saveMonitorSettings)
+	mux.HandleFunc("GET /api/monitor/alerts", router.pendingMonitorAlerts)
+	mux.HandleFunc("GET /api/monitor/alerts/unnotified", router.unnotifiedMonitorAlerts)
+	mux.HandleFunc("POST /api/monitor/alerts/{id}/notified", router.markMonitorAlertNotified)
+	mux.HandleFunc("POST /api/monitor/alerts/{id}/reviews", router.createPositionReview)
 	mux.HandleFunc("GET /api/rules", router.listRules)
 	mux.HandleFunc("POST /api/rules/versions", router.createRuleVersion)
 	mux.HandleFunc("GET /api/audit", router.audit)
 	mux.HandleFunc("POST /api/market/refresh", router.refreshMarket)
 	mux.HandleFunc("GET /api/market/snapshots/latest", router.latestMarket)
+	mux.HandleFunc("POST /api/market/live/refresh", router.refreshLiveMarket)
+	mux.HandleFunc("GET /api/market/live/latest", router.latestLiveMarket)
+	mux.HandleFunc("GET /api/market/refresh-status", router.marketRefreshStatus)
 	mux.HandleFunc("GET /api/market/overview", router.marketOverview)
 	mux.HandleFunc("GET /api/market/history", router.marketHistory)
 	mux.HandleFunc("POST /api/market/history/refresh", router.refreshMarketHistory)
@@ -98,6 +116,21 @@ func (rt *Router) revisePlan(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, data, err, http.StatusOK)
 }
 
+func (rt *Router) createPreTradeConfirmation(w http.ResponseWriter, r *http.Request) {
+	var input service.PreTradeConfirmationInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_PRE_TRADE_CONFIRMATION", "开仓前确认内容无效", nil)
+		return
+	}
+	data, err := rt.service.ConfirmPreTrade(r.Context(), r.PathValue("id"), input)
+	writeResult(w, data, err, http.StatusCreated)
+}
+
+func (rt *Router) latestPreTradeConfirmation(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.LatestPreTradeConfirmation(r.Context(), r.PathValue("id"))
+	writeResult(w, data, err, http.StatusOK)
+}
+
 func (rt *Router) createExecution(w http.ResponseWriter, r *http.Request) {
 	var draft service.ExecutionDraft
 	if err := decodeJSON(r, &draft); err != nil {
@@ -123,6 +156,95 @@ func (rt *Router) reverseExecution(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) portfolio(w http.ResponseWriter, r *http.Request) {
 	data, err := rt.service.Portfolio(r.Context())
 	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) allocation(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.Allocation(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) reviseAllocation(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Reason string                 `json:"reason"`
+		Draft  domain.AllocationDraft `json:"draft"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_ALLOCATION_REVISION", "资产配置修订格式无效", nil)
+		return
+	}
+	data, err := rt.service.ReviseAllocation(r.Context(), input.Draft, input.Reason)
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) allocationVersions(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.AllocationVersions(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) allocationValueEvents(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.AllocationValueEvents(r.Context(), r.PathValue("key"))
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) recordAllocationValue(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ValueFen   int64     `json:"valueFen"`
+		ObservedAt time.Time `json:"observedAt"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_ALLOCATION_VALUE", "资产市值记录格式无效", nil)
+		return
+	}
+	data, err := rt.service.RecordAllocationValue(r.Context(), r.PathValue("key"), input.ValueFen, input.ObservedAt)
+	writeResult(w, data, err, http.StatusCreated)
+}
+
+func (rt *Router) monitorStatus(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.MonitorStatus(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) monitorSettings(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.MonitorSettings(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) saveMonitorSettings(w http.ResponseWriter, r *http.Request) {
+	var settings domain.MonitorSettings
+	if err := decodeJSON(r, &settings); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_MONITOR_SETTINGS", "监控设置内容无效", nil)
+		return
+	}
+	err := rt.service.SaveMonitorSettings(r.Context(), settings)
+	writeResult(w, settings, err, http.StatusOK)
+}
+
+func (rt *Router) pendingMonitorAlerts(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.PendingPriceAlerts(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) unnotifiedMonitorAlerts(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.UnnotifiedPriceAlerts(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) markMonitorAlertNotified(w http.ResponseWriter, r *http.Request) {
+	err := rt.service.MarkPriceAlertNotified(r.Context(), r.PathValue("id"))
+	writeResult(w, map[string]string{"id": r.PathValue("id")}, err, http.StatusOK)
+}
+
+func (rt *Router) createPositionReview(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Decision domain.ReviewDecision `json:"decision"`
+		Reason   string                `json:"reason"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_POSITION_REVIEW", "持仓复核内容无效", nil)
+		return
+	}
+	data, err := rt.service.CompletePositionReview(r.Context(), r.PathValue("id"), input.Decision, input.Reason)
+	writeResult(w, data, err, http.StatusCreated)
 }
 
 func (rt *Router) listRules(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +277,21 @@ func (rt *Router) refreshMarket(w http.ResponseWriter, r *http.Request) {
 
 func (rt *Router) latestMarket(w http.ResponseWriter, r *http.Request) {
 	data, err := rt.service.LatestMarket(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) refreshLiveMarket(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.RefreshLiveMarket(r.Context())
+	writeResult(w, data, err, http.StatusCreated)
+}
+
+func (rt *Router) latestLiveMarket(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.LatestLiveMarket(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) marketRefreshStatus(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.MarketRefreshStatuses(r.Context())
 	writeResult(w, data, err, http.StatusOK)
 }
 

@@ -77,3 +77,42 @@ func TestMetricObservationsKeepCorrectionsAndReturnLatest(t *testing.T) {
 		t.Fatalf("latest=%#v fetchedAt=%s err=%v", latest, fetchedAt, err)
 	}
 }
+
+func TestMarketSnapshotsKeepCloseAndLiveModesSeparate(t *testing.T) {
+	db := openTestStore(t)
+	ctx := context.Background()
+	quote := market.Quote{
+		TradeDate: "2026-08-21", Market: "SZ", Code: "300308", Name: "中际旭创", AssetType: market.KindStock,
+		CloseMinor: 94_300, TurnoverFen: 2_668_640_063_300, Source: "fixture", SourceTime: time.Date(2026, 8, 21, 7, 40, 0, 0, time.UTC),
+	}
+	if _, err := db.SaveMarketSnapshot(ctx, market.KindStock, []market.Quote{quote}, "fixture-close", time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	liveQuote := quote
+	liveQuote.CloseMinor = 94_500
+	if _, err := db.SaveMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindStock, []market.Quote{liveQuote}, "fixture-live", time.Date(2026, 8, 21, 8, 5, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	closeSnapshot, err := db.LatestMarketSnapshot(ctx, market.KindStock)
+	if err != nil || closeSnapshot.Mode != market.SnapshotModeClose || closeSnapshot.Source != "fixture-close" || closeSnapshot.Entries[0].CloseMinor != 94_300 {
+		t.Fatalf("close snapshot=%#v err=%v", closeSnapshot, err)
+	}
+	liveSnapshot, err := db.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindStock)
+	if err != nil || liveSnapshot.Mode != market.SnapshotModeLive || liveSnapshot.Source != "fixture-live" || liveSnapshot.Entries[0].CloseMinor != 94_500 {
+		t.Fatalf("live snapshot=%#v err=%v", liveSnapshot, err)
+	}
+}
+
+func TestMarketRefreshStatusKeepsLastSuccessAfterFailure(t *testing.T) {
+	db := openTestStore(t)
+	ctx := context.Background()
+	successAt := time.Date(2026, 8, 21, 7, 0, 0, 0, time.UTC)
+	if _, err := db.SaveMarketRefreshStatus(ctx, market.SnapshotModeClose, successAt, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	failureAt := successAt.Add(time.Hour)
+	status, err := db.SaveMarketRefreshStatus(ctx, market.SnapshotModeClose, failureAt, false, map[string]string{"stock": "source unavailable"})
+	if err != nil || !status.LastAttemptAt.Equal(failureAt) || status.LastSuccessfulAt == nil || !status.LastSuccessfulAt.Equal(successAt) || status.Errors["stock"] != "source unavailable" {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+}

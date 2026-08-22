@@ -5,7 +5,7 @@ import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import { api } from '@/renderer/lib/api'
 import { formatCNY } from '@/renderer/lib/format'
-import type { RuleVersion } from '@/renderer/types'
+import type { MonitorInterval, MonitorSettings, RuleVersion } from '@/renderer/types'
 
 interface AuditRow { id: string; entityType: string; action: string; createdAt: string }
 interface CSVPreview { valid: unknown[]; errors: unknown[]; duplicates: unknown[]; stockTop20: unknown[]; etfTop10: unknown[] }
@@ -15,27 +15,49 @@ const audit = shallowRef<AuditRow[]>([])
 const error = shallowRef('')
 const notice = shallowRef('')
 const busy = shallowRef(false)
-const edit = reactive({ reason: '', lossCaution: 15000, lossRedLine: 20000, chinaTechLimit: 80000 })
+const monitorBusy = shallowRef(false)
+const monitorInterval = shallowRef<MonitorInterval>('10m')
+const edit = reactive({
+  reason: '', lossCaution: 15000, lossRedLine: 20000, chinaTechLimit: 80000,
+  enforceTencentSequenceGate: false, tencentObservationDays: 20, minimumDisciplineScore: 90,
+})
 const csv = shallowRef<{ preview: CSVPreview; digest: string; name: string }>()
 const current = computed(() => rules.value[0])
 
 async function load() {
   try {
-    [rules.value, audit.value] = await Promise.all([api.request<RuleVersion[]>('/api/rules'), api.request<AuditRow[]>('/api/audit')])
+    const [loadedRules, loadedAudit, monitorSettings] = await Promise.all([api.request<RuleVersion[]>('/api/rules'), api.request<AuditRow[]>('/api/audit'), api.request<MonitorSettings>('/api/monitor/settings')])
+    rules.value = loadedRules
+    audit.value = loadedAudit
+    monitorInterval.value = monitorSettings.interval
     if (current.value) {
       edit.lossCaution = current.value.snapshot.lossCautionFen / 100
       edit.lossRedLine = current.value.snapshot.lossRedLineFen / 100
       edit.chinaTechLimit = current.value.snapshot.chinaTechLimitFen / 100
+      edit.enforceTencentSequenceGate = current.value.snapshot.enforceTencentSequenceGate === true
+      edit.tencentObservationDays = Number(current.value.snapshot.tencentObservationDays ?? 20)
+      edit.minimumDisciplineScore = Number(current.value.snapshot.minimumDisciplineScoreBP ?? 9_000) / 100
     }
   }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '设置加载失败' }
+}
+
+async function saveMonitorSettings() {
+  monitorBusy.value = true
+  error.value = ''
+  try {
+    await api.request<MonitorSettings>('/api/monitor/settings', { method: 'PUT', body: JSON.stringify({ interval: monitorInterval.value }) })
+    notice.value = '价格提醒设置已保存；仅在应用运行时检查公开报价。'
+  }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : '价格提醒设置保存失败' }
+  finally { monitorBusy.value = false }
 }
 
 async function createRule() {
   if (!current.value) return
   busy.value = true; error.value = ''
   try {
-    await api.request('/api/rules/versions', { method: 'POST', body: JSON.stringify({ reason: edit.reason, snapshot: { ...current.value.snapshot, lossCautionFen: Math.round(edit.lossCaution * 100), lossRedLineFen: Math.round(edit.lossRedLine * 100), chinaTechLimitFen: Math.round(edit.chinaTechLimit * 100) } }) })
+    await api.request('/api/rules/versions', { method: 'POST', body: JSON.stringify({ reason: edit.reason, snapshot: { ...current.value.snapshot, lossCautionFen: Math.round(edit.lossCaution * 100), lossRedLineFen: Math.round(edit.lossRedLine * 100), chinaTechLimitFen: Math.round(edit.chinaTechLimit * 100), enforceTencentSequenceGate: edit.enforceTencentSequenceGate, tencentObservationDays: Math.round(edit.tencentObservationDays), minimumDisciplineScoreBP: Math.round(edit.minimumDisciplineScore * 100) } }) })
     edit.reason = ''; notice.value = '规则新版本已创建，历史计划仍引用旧版本'; await load()
   }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '规则修改失败' }
@@ -74,10 +96,16 @@ onMounted(load)
       <div class="section-title"><p>当前规则 v{{ current.version }}</p><h2>资金与风险边界</h2></div>
       <form class="rule-form" @submit.prevent="createRule">
         <div class="field-grid field-grid--three"><label class="field"><span>损失警戒线（元）</span><input v-model.number="edit.lossCaution" type="number" min="1" /></label><label class="field"><span>损失红线（元）</span><input v-model.number="edit.lossRedLine" type="number" min="1" /></label><label class="field"><span>中国科技敞口上限（元）</span><input v-model.number="edit.chinaTechLimit" type="number" min="1" /></label></div>
+        <fieldset class="sequence-gate"><legend>腾讯顺序门槛（可选）</legend><label class="check-field"><input v-model="edit.enforceTencentSequenceGate" type="checkbox" /><span>启用腾讯顺序门槛</span></label><p>关闭时，腾讯计划不会因阿里观察天数或纪律分被拒绝。</p><div v-if="edit.enforceTencentSequenceGate" class="field-grid field-grid--two"><label class="field"><span>阿里观察交易日</span><input v-model.number="edit.tencentObservationDays" type="number" min="0" step="1" /></label><label class="field"><span>最低纪律分</span><input v-model.number="edit.minimumDisciplineScore" type="number" min="0" max="100" step="1" /></label></div></fieldset>
         <label class="field"><span>修改原因</span><textarea v-model="edit.reason" rows="3" placeholder="为什么未来需要改？不能写成给历史交易找理由。" /></label>
         <button class="button button--primary" type="submit" :disabled="busy || !edit.reason.trim()">创建规则新版本</button>
       </form>
       <div class="immutable-facts"><span>固定初始资金 {{ formatCNY(current.snapshot.initialCapitalFen) }}</span><span>腾讯上限 100 股</span><span>阿里基础上限 100 股</span><span>港股整手 100 股</span></div>
+    </section>
+
+    <section class="settings-section">
+      <div class="section-title"><p>价格提醒</p><h2>应用运行时检查</h2></div>
+      <div class="reminder-settings"><label class="field"><span>提醒检查间隔</span><select v-model="monitorInterval"><option value="off">关闭</option><option value="10m">每 10 分钟</option><option value="15m">每 15 分钟</option><option value="30m">每 30 分钟</option></select></label><p>仅在 Plain Rule 打开期间查询公开报价；触及风险退出线或目标区间时，系统会通知并要求你完成复核记录。</p><button class="button button--primary" type="button" :disabled="monitorBusy" @click="saveMonitorSettings">{{ monitorBusy ? '正在保存…' : '保存价格提醒设置' }}</button></div>
     </section>
 
     <section class="settings-section">
@@ -104,6 +132,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.settings-section { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 28px; padding: 28px 0; border-bottom: 1px solid var(--line); }.section-title p { margin: 0 0 6px; color: var(--accent); font-size: 10px; letter-spacing: .12em; }.section-title h2 { margin: 0; font-family: var(--font-serif); font-size: 22px; font-weight: 500; }.rule-form { display: grid; gap: 15px; }.field-grid { display: grid; gap: 14px; }.field-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.immutable-facts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; }.immutable-facts span { padding: 7px 9px; color: var(--ink-muted); border: 1px solid var(--line); font-size: 10px; }.data-actions { display: flex; align-items: center; gap: 12px; }.data-actions p { color: var(--ink-faint); font-size: 11px; }.csv-preview { grid-column: 2; display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 12px; background: var(--paper-deep); font-size: 11px; }.audit-list { margin: 0; padding: 0; list-style: none; }.audit-list li { display: grid; grid-template-columns: 150px 120px 1fr; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }.audit-list time { color: var(--ink-faint); }.success-notice { color: #506448; font-size: 13px; }
+.settings-section { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 28px; padding: 28px 0; border-bottom: 1px solid var(--line); }.section-title p { margin: 0 0 6px; color: var(--accent); font-size: 10px; letter-spacing: .12em; }.section-title h2 { margin: 0; font-family: var(--font-serif); font-size: 22px; font-weight: 500; }.rule-form, .reminder-settings { display: grid; gap: 15px; }.reminder-settings p { max-width: 620px; margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.65; }.reminder-settings .field { max-width: 260px; }.field-grid { display: grid; gap: 14px; }.field-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.field-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }.sequence-gate { display: grid; gap: 12px; margin: 0; padding: 14px; border: 1px solid var(--line); }.sequence-gate legend { padding: 0 6px; color: var(--ink-muted); font-size: 11px; }.sequence-gate p { margin: 0; color: var(--ink-faint); font-size: 11px; }.check-field { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; }.check-field input { width: auto; }.immutable-facts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; }.immutable-facts span { padding: 7px 9px; color: var(--ink-muted); border: 1px solid var(--line); font-size: 10px; }.data-actions { display: flex; align-items: center; gap: 12px; }.data-actions p { color: var(--ink-faint); font-size: 11px; }.csv-preview { grid-column: 2; display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 12px; background: var(--paper-deep); font-size: 11px; }.audit-list { margin: 0; padding: 0; list-style: none; }.audit-list li { display: grid; grid-template-columns: 150px 120px 1fr; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }.audit-list time { color: var(--ink-faint); }.success-notice { color: #506448; font-size: 13px; }
 .rule-history { display: grid; gap: 1px; margin: 0; padding: 0; background: var(--line); list-style: none; }.rule-history li { display: grid; grid-template-columns: 120px 1fr; gap: 5px 16px; padding: 14px; background: var(--paper); }.rule-history li div { grid-row: span 2; display: grid; gap: 4px; }.rule-history strong { font-family: var(--font-serif); font-size: 20px; font-weight: 500; }.rule-history time, .rule-history span { color: var(--ink-faint); font-size: 10px; }.rule-history p { margin: 0; font-size: 12px; }
 </style>

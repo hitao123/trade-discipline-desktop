@@ -75,7 +75,81 @@ func TestMigrationAddsAppendOnlyMarketHistorySchema(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 2 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
 		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
+func TestMigrationAddsDisciplineLoopTables(t *testing.T) {
+	db := openTestStore(t)
+	for _, table := range []string{"pre_trade_confirmations", "price_alert_events", "position_review_events"} {
+		var name string
+		if err := db.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil || name != table {
+			t.Fatalf("missing %s: %v", table, err)
+		}
+	}
+	var version int
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
+func TestMigrationAddsAssetAllocationTables(t *testing.T) {
+	db := openTestStore(t)
+	for _, table := range []string{"allocation_profiles", "allocation_versions", "allocation_value_events"} {
+		var name string
+		if err := db.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil || name != table {
+			t.Fatalf("missing %s: %v", table, err)
+		}
+	}
+	var version int
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
+func TestMigrationAddsMarketModeAndRefreshStatus(t *testing.T) {
+	db := openTestStore(t)
+	var version int
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+	var table string
+	if err := db.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='market_refresh_status'").Scan(&table); err != nil || table != "market_refresh_status" {
+		t.Fatalf("market_refresh_status missing: %v", err)
+	}
+	var column string
+	if err := db.DB().QueryRow("SELECT name FROM pragma_table_info('market_snapshots') WHERE name='snapshot_mode'").Scan(&column); err != nil || column != "snapshot_mode" {
+		t.Fatalf("snapshot mode column missing: %v", err)
+	}
+}
+
+func TestMigrationUpgradesExistingMarketSnapshotsToCloseMode(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.DB().Exec(`CREATE TABLE market_snapshots (
+		id TEXT PRIMARY KEY,
+		trade_date TEXT NOT NULL,
+		ranking_kind TEXT NOT NULL,
+		source TEXT NOT NULL,
+		fetched_at TEXT NOT NULL,
+		status TEXT NOT NULL,
+		version INTEGER NOT NULL,
+		UNIQUE(trade_date, ranking_kind, version)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO market_snapshots(id, trade_date, ranking_kind, source, fetched_at, status, version) VALUES ('legacy-stock', '2026-08-21', 'stock', 'fixture', '2026-08-21T08:00:00Z', 'success', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	if err := db.DB().QueryRow(`SELECT snapshot_mode FROM market_snapshots WHERE id='legacy-stock'`).Scan(&mode); err != nil || mode != "close" {
+		t.Fatalf("legacy mode=%q err=%v", mode, err)
 	}
 }

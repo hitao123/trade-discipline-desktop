@@ -14,10 +14,17 @@ import (
 )
 
 type MarketResult struct {
-	Stock    store.MarketSnapshotRow `json:"stock"`
-	ETF      store.MarketSnapshotRow `json:"etf"`
-	Overview MarketOverviewResult    `json:"overview"`
-	Errors   map[string]string       `json:"errors,omitempty"`
+	Stock    store.MarketSnapshotRow      `json:"stock"`
+	ETF      store.MarketSnapshotRow      `json:"etf"`
+	Overview MarketOverviewResult         `json:"overview"`
+	Errors   map[string]string            `json:"errors,omitempty"`
+	Status   store.MarketRefreshStatusRow `json:"status"`
+}
+
+type LiveMarketResult struct {
+	MarketResult
+	IsLive bool   `json:"isLive"`
+	State  string `json:"state"`
 }
 
 type MarketOverviewResult struct {
@@ -43,15 +50,36 @@ func (s *Service) SetMarketProvider(provider market.Provider) {
 	s.marketProvider = provider
 }
 
-func (s *Service) RefreshMarket(ctx context.Context) (MarketResult, error) {
-	result := MarketResult{Errors: make(map[string]string)}
+func (s *Service) SetMarketRankingFallback(provider market.RankingProvider) {
+	s.rankingFallback = provider
+}
+
+func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, returnErr error) {
+	result = MarketResult{Errors: make(map[string]string)}
+	attemptedAt := s.now()
+	rankingsRefreshed := 0
+	defer func() {
+		status, err := s.store.SaveMarketRefreshStatus(ctx, market.SnapshotModeClose, attemptedAt, rankingsRefreshed == 2, result.Errors)
+		if err != nil && returnErr == nil {
+			returnErr = err
+		}
+		result.Status = status
+	}()
 	for _, kind := range []market.RankingKind{market.KindStock, market.KindETF} {
 		quotes, err := s.marketProvider.FetchRankings(ctx, kind)
 		if err != nil {
-			result.Errors[string(kind)] = err.Error()
-			continue
+			primaryErr := err
+			if s.rankingFallback == nil {
+				result.Errors[string(kind)] = err.Error()
+				continue
+			}
+			quotes, err = s.rankingFallback.FetchRankings(ctx, kind)
+			if err != nil {
+				result.Errors[string(kind)] = fmt.Sprintf("主来源失败：%s；备用来源失败：%s", primaryErr, err)
+				continue
+			}
 		}
-		row, err := s.store.SaveMarketSnapshot(ctx, kind, quotes, "eastmoney-public-close", s.now())
+		row, err := s.store.SaveMarketSnapshot(ctx, kind, quotes, rankingSource(quotes), attemptedAt)
 		if err != nil {
 			result.Errors[string(kind)] = err.Error()
 			continue
@@ -61,6 +89,7 @@ func (s *Service) RefreshMarket(ctx context.Context) (MarketResult, error) {
 		} else {
 			result.ETF = row
 		}
+		rankingsRefreshed++
 	}
 	if result.Stock.ID == "" {
 		latest, err := s.store.LatestMarketSnapshot(ctx, market.KindStock)
@@ -84,7 +113,7 @@ func (s *Service) RefreshMarket(ctx context.Context) (MarketResult, error) {
 	} else {
 		quotes, err := s.marketProvider.FetchQuotes(ctx, keys)
 		if err != nil {
-			result.Errors["quotes"] = err.Error()
+			result.Errors["quotes"] = "持仓参考报价暂未更新（东方财富公开接口临时不可用；已保留最近一次成功报价）"
 		} else if err := s.store.UpdateQuotes(ctx, quotes); err != nil {
 			result.Errors["quotes"] = err.Error()
 		}
@@ -126,7 +155,110 @@ func (s *Service) LatestMarket(ctx context.Context) (MarketResult, error) {
 	if err != nil {
 		return MarketResult{}, err
 	}
-	return MarketResult{Stock: stock, ETF: etf, Overview: overview}, nil
+	status, err := s.store.MarketRefreshStatus(ctx, market.SnapshotModeClose)
+	if err != nil {
+		return MarketResult{}, err
+	}
+	return MarketResult{Stock: stock, ETF: etf, Overview: overview, Status: status}, nil
+}
+
+func (s *Service) MarketRefreshStatuses(ctx context.Context) (map[string]store.MarketRefreshStatusRow, error) {
+	closeStatus, err := s.store.MarketRefreshStatus(ctx, market.SnapshotModeClose)
+	if err != nil {
+		return nil, err
+	}
+	liveStatus, err := s.store.MarketRefreshStatus(ctx, market.SnapshotModeLive)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]store.MarketRefreshStatusRow{
+		string(market.SnapshotModeClose): closeStatus,
+		string(market.SnapshotModeLive):  liveStatus,
+	}, nil
+}
+
+func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResult, returnErr error) {
+	attemptedAt := s.now()
+	result.IsLive = market.IsAShareTradingSession(attemptedAt)
+	if !result.IsLive {
+		result.State = "market_closed"
+		cached, err := s.LatestLiveMarket(ctx)
+		result.MarketResult = cached.MarketResult
+		returnErr = err
+		result.IsLive = false
+		result.State = "market_closed"
+		return result, returnErr
+	}
+	result.State = "live"
+	result.Errors = make(map[string]string)
+	defer func() {
+		status, err := s.store.SaveMarketRefreshStatus(ctx, market.SnapshotModeLive, attemptedAt, result.Stock.ID != "" && result.ETF.ID != "", result.Errors)
+		if err != nil && returnErr == nil {
+			returnErr = err
+		}
+		result.Status = status
+	}()
+	if s.rankingFallback == nil {
+		return result, fmt.Errorf("实时行情来源尚未配置")
+	}
+	for _, kind := range []market.RankingKind{market.KindStock, market.KindETF} {
+		quotes, err := s.rankingFallback.FetchRankings(ctx, kind)
+		if err != nil {
+			result.Errors[string(kind)] = err.Error()
+			continue
+		}
+		row, err := s.store.SaveMarketSnapshotForMode(ctx, market.SnapshotModeLive, kind, quotes, rankingSource(quotes), attemptedAt)
+		if err != nil {
+			result.Errors[string(kind)] = err.Error()
+			continue
+		}
+		if kind == market.KindStock {
+			result.Stock = row
+		} else {
+			result.ETF = row
+		}
+	}
+	if result.Stock.ID == "" {
+		result.Stock, _ = s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindStock)
+	}
+	if result.ETF.ID == "" {
+		result.ETF, _ = s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindETF)
+	}
+	if result.Stock.ID == "" && result.ETF.ID == "" {
+		return result, fmt.Errorf("实时股票和 ETF 榜单均无可用数据")
+	}
+	return result, nil
+}
+
+func (s *Service) LatestLiveMarket(ctx context.Context) (LiveMarketResult, error) {
+	stock, err := s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindStock)
+	if err != nil {
+		return LiveMarketResult{}, err
+	}
+	etf, err := s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindETF)
+	if err != nil {
+		return LiveMarketResult{}, err
+	}
+	status, err := s.store.MarketRefreshStatus(ctx, market.SnapshotModeLive)
+	if err != nil {
+		return LiveMarketResult{}, err
+	}
+	now := s.now()
+	return LiveMarketResult{MarketResult: MarketResult{Stock: stock, ETF: etf, Status: status}, IsLive: market.IsAShareTradingSession(now), State: liveMarketState(now)}, nil
+}
+
+func liveMarketState(now time.Time) string {
+	if market.IsAShareTradingSession(now) {
+		return "live"
+	}
+	return "market_closed"
+}
+
+func rankingSource(quotes []market.Quote) string {
+	if len(quotes) == 0 || quotes[0].Source == "" {
+		return "public-ranking"
+	}
+	return quotes[0].Source
 }
 
 var marketMetricErrorKeys = []string{

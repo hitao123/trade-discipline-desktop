@@ -4,6 +4,7 @@ import { onMounted, shallowRef } from 'vue'
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import PlanForm from '@/renderer/components/plans/PlanForm.vue'
+import PreTradeConfirmation from '@/renderer/components/plans/PreTradeConfirmation.vue'
 import { APIError, api } from '@/renderer/lib/api'
 import type { Instrument, PlanRecord } from '@/renderer/types'
 
@@ -15,6 +16,11 @@ const error = shallowRef('')
 const fieldErrors = shallowRef<Record<string, string>>({})
 const editingPlan = shallowRef<PlanRecord>()
 const revisionReason = shallowRef('')
+const confirmationPlan = shallowRef<PlanRecord>()
+const confirmationStartedAt = shallowRef('')
+const confirmationBusy = shallowRef(false)
+const confirmationError = shallowRef('')
+const confirmationNotice = shallowRef('')
 
 async function load() {
   try {
@@ -40,6 +46,7 @@ async function savePlan(payload: Record<string, unknown>) {
     plans.value = editingPlan.value ? plans.value.map(item => item.id === plan.id ? plan : item) : [plan, ...plans.value]
     editingPlan.value = undefined
     revisionReason.value = ''
+    confirmationPlan.value = undefined
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '计划保存失败'
@@ -47,6 +54,30 @@ async function savePlan(payload: Record<string, unknown>) {
   }
   finally {
     busy.value = false
+  }
+}
+
+function startPreTradeConfirmation(plan: PlanRecord) {
+  confirmationPlan.value = plan
+  confirmationStartedAt.value = new Date().toISOString()
+  confirmationError.value = ''
+  confirmationNotice.value = ''
+}
+
+async function confirmPreTrade(payload: { planId: string; startedAt: string; noFomo: boolean; noLossRecovery: boolean; noAveragingDown: boolean }) {
+  confirmationBusy.value = true
+  confirmationError.value = ''
+  try {
+    await api.request(`/api/plans/${payload.planId}/pre-trade-confirmations`, { method: 'POST', body: JSON.stringify(payload) })
+    confirmationPlan.value = undefined
+    confirmationNotice.value = '已准备去券商执行；开仓前确认已写入本地记录。'
+    error.value = ''
+  }
+  catch (cause) {
+    confirmationError.value = cause instanceof Error ? cause.message : '开仓前确认记录失败'
+  }
+  finally {
+    confirmationBusy.value = false
   }
 }
 
@@ -64,6 +95,7 @@ onMounted(load)
   <div>
     <PageHeader eyebrow="PLANS" title="先写计划，再谈买入" description="计划可以被拒绝，但不能被无痕覆盖。系统只负责纪律校验，不会向券商发送任何指令。" />
     <ErrorNotice :message="error" />
+    <p v-if="confirmationNotice" class="confirmation-notice" role="status">{{ confirmationNotice }}</p>
     <div class="plan-layout">
       <div>
         <div v-if="editingPlan" class="revision-bar">
@@ -71,7 +103,8 @@ onMounted(load)
           <label class="field"><span>修改原因</span><input v-model="revisionReason" placeholder="例如：补充最新财报证据" required /></label>
           <button class="button" type="button" @click="editingPlan = undefined; revisionReason = ''">取消修订</button>
         </div>
-        <PlanForm :key="editingPlan?.id ?? 'new'" :instruments="instruments" :busy="busy || (!!editingPlan && !revisionReason.trim())" :field-errors="fieldErrors" :initial-draft="editingPlan?.draft" :submit-label="editingPlan ? '保存修订并重新校验' : '保存并校验'" @submit="savePlan" />
+        <PlanForm :key="editingPlan?.id ?? 'new'" :instruments="instruments" :busy="busy" :submit-disabled="!!editingPlan && !revisionReason.trim()" :field-errors="fieldErrors" :initial-draft="editingPlan?.draft" :submit-label="editingPlan ? '保存修订并重新校验' : '保存并校验'" @submit="savePlan" />
+        <PreTradeConfirmation v-if="confirmationPlan" :plan="confirmationPlan" :started-at="confirmationStartedAt" :busy="confirmationBusy" :error="confirmationError" @confirm="confirmPreTrade" />
       </div>
       <aside class="decision-panel">
         <template v-if="selectedPlan">
@@ -99,6 +132,7 @@ onMounted(load)
           <p>{{ plan.draft.thesis || '未填写买入逻辑' }}</p>
           <small>{{ plan.draft.quantity }} 股 · 规则 {{ plan.ruleVersionId }}</small>
           <button class="button" type="button" @click="startRevision(plan)">修订（保留原记录）</button>
+          <button v-if="plan.status === 'qualified'" class="button button--primary" type="button" @click="startPreTradeConfirmation(plan)">开始开仓前确认</button>
         </article>
       </div>
       <p v-else class="calm-note">尚无计划记录。</p>
@@ -122,5 +156,6 @@ onMounted(load)
 .revision-bar > div { display: grid; gap: 4px; }.revision-bar span { color: var(--ink-muted); font-size: 12px; }.revision-bar .field { margin: 0; }
 .plan-history { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--line); }.section-title { display: flex; align-items: end; justify-content: space-between; }.section-title h2 { margin: 0; font-family: var(--font-serif); font-size: 25px; font-weight: 500; }.section-title > span { color: var(--ink-faint); font-size: 12px; }
 .plan-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }.plan-list article { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); }.plan-list article > div { display: flex; justify-content: space-between; }.plan-list article p { min-height: 42px; margin: 0; color: var(--ink-muted); font-size: 13px; line-height: 1.6; }.plan-list article small { color: var(--ink-faint); }.plan-list .qualified { color: #55644d; }.plan-list .rejected { color: var(--accent); }
+.confirmation-notice { margin: 0 0 16px; color: var(--success); font-size: 13px; }
 @media (max-width: 900px) { .revision-bar { grid-template-columns: 1fr; } }
 </style>

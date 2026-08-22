@@ -22,6 +22,7 @@ type EastmoneyProvider struct {
 	HistoryURL         string
 	FallbackHistoryURL string
 	DataCenterURL      string
+	SinaMetricsURL     string
 	Client             *http.Client
 	Now                func() time.Time
 }

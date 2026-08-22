@@ -11,13 +11,21 @@ import (
 )
 
 type MarketSnapshotRow struct {
-	ID        string             `json:"id"`
-	TradeDate string             `json:"tradeDate"`
-	Kind      market.RankingKind `json:"kind"`
-	Source    string             `json:"source"`
-	FetchedAt time.Time          `json:"fetchedAt"`
-	Version   int                `json:"version"`
-	Entries   []market.Quote     `json:"entries"`
+	ID        string              `json:"id"`
+	TradeDate string              `json:"tradeDate"`
+	Kind      market.RankingKind  `json:"kind"`
+	Mode      market.SnapshotMode `json:"mode"`
+	Source    string              `json:"source"`
+	FetchedAt time.Time           `json:"fetchedAt"`
+	Version   int                 `json:"version"`
+	Entries   []market.Quote      `json:"entries"`
+}
+
+type MarketRefreshStatusRow struct {
+	Mode             market.SnapshotMode `json:"mode"`
+	LastAttemptAt    time.Time           `json:"lastAttemptAt"`
+	LastSuccessfulAt *time.Time          `json:"lastSuccessfulAt,omitempty"`
+	Errors           map[string]string   `json:"errors,omitempty"`
 }
 
 type ObservationStats struct {
@@ -234,12 +242,16 @@ func (s *Store) UpdateQuotes(ctx context.Context, quotes []market.Quote) error {
 }
 
 func (s *Store) SaveMarketSnapshot(ctx context.Context, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
+	return s.SaveMarketSnapshotForMode(ctx, market.SnapshotModeClose, kind, quotes, source, fetchedAt)
+}
+
+func (s *Store) SaveMarketSnapshotForMode(ctx context.Context, mode market.SnapshotMode, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("begin market snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	row, err := saveMarketSnapshotTx(ctx, tx, kind, quotes, source, fetchedAt)
+	row, err := saveMarketSnapshotTx(ctx, tx, mode, kind, quotes, source, fetchedAt)
 	if err != nil {
 		return MarketSnapshotRow{}, err
 	}
@@ -261,7 +273,7 @@ func (s *Store) SaveMarketBatch(ctx context.Context, groups map[market.RankingKi
 		if len(quotes) == 0 {
 			continue
 		}
-		row, err := saveMarketSnapshotTx(ctx, tx, kind, quotes, source, fetchedAt)
+		row, err := saveMarketSnapshotTx(ctx, tx, market.SnapshotModeClose, kind, quotes, source, fetchedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -276,7 +288,10 @@ func (s *Store) SaveMarketBatch(ctx context.Context, groups map[market.RankingKi
 	return result, nil
 }
 
-func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
+func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotMode, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
+	if mode != market.SnapshotModeClose && mode != market.SnapshotModeLive {
+		return MarketSnapshotRow{}, fmt.Errorf("unsupported market snapshot mode %q", mode)
+	}
 	if len(quotes) == 0 {
 		return MarketSnapshotRow{}, fmt.Errorf("%s 榜单没有有效数据", kind)
 	}
@@ -292,7 +307,7 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, kind market.RankingKi
 	}
 	id := NewID("market")
 	stamp := fetchedAt.UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO market_snapshots(id, trade_date, ranking_kind, source, fetched_at, status, version) VALUES(?,?,?,?,?,'success',?)`, id, tradeDate, kind, source, stamp, version); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO market_snapshots(id, trade_date, ranking_kind, snapshot_mode, source, fetched_at, status, version) VALUES(?,?,?,?,?,?,'success',?)`, id, tradeDate, kind, mode, source, stamp, version); err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("insert market snapshot: %w", err)
 	}
 	for index, quote := range quotes {
@@ -313,15 +328,20 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, kind market.RankingKi
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'market_snapshot', ?, 'imported', NULL, ?, ?)`, NewID("audit"), id, fmt.Sprintf(`{"kind":%q,"rows":%d}`, kind, len(quotes)), stamp); err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("audit market snapshot: %w", err)
 	}
-	return MarketSnapshotRow{ID: id, TradeDate: tradeDate, Kind: kind, Source: source, FetchedAt: fetchedAt.UTC(), Version: version, Entries: quotes}, nil
+	return MarketSnapshotRow{ID: id, TradeDate: tradeDate, Kind: kind, Mode: mode, Source: source, FetchedAt: fetchedAt.UTC(), Version: version, Entries: quotes}, nil
 }
 
 func (s *Store) LatestMarketSnapshot(ctx context.Context, kind market.RankingKind) (MarketSnapshotRow, error) {
+	return s.LatestMarketSnapshotForMode(ctx, market.SnapshotModeClose, kind)
+}
+
+func (s *Store) LatestMarketSnapshotForMode(ctx context.Context, mode market.SnapshotMode, kind market.RankingKind) (MarketSnapshotRow, error) {
 	var row MarketSnapshotRow
 	var fetched string
-	err := s.db.QueryRowContext(ctx, `SELECT id, trade_date, source, fetched_at, version FROM market_snapshots WHERE ranking_kind=? AND status='success' ORDER BY trade_date DESC, version DESC LIMIT 1`, kind).Scan(&row.ID, &row.TradeDate, &row.Source, &fetched, &row.Version)
+	err := s.db.QueryRowContext(ctx, `SELECT id, trade_date, source, fetched_at, version FROM market_snapshots WHERE ranking_kind=? AND snapshot_mode=? AND status='success' ORDER BY trade_date DESC, version DESC LIMIT 1`, kind, mode).Scan(&row.ID, &row.TradeDate, &row.Source, &fetched, &row.Version)
 	if err == sql.ErrNoRows {
 		row.Kind = kind
+		row.Mode = mode
 		row.Entries = []market.Quote{}
 		return row, nil
 	}
@@ -329,6 +349,7 @@ func (s *Store) LatestMarketSnapshot(ctx context.Context, kind market.RankingKin
 		return MarketSnapshotRow{}, fmt.Errorf("load latest market snapshot: %w", err)
 	}
 	row.Kind = kind
+	row.Mode = mode
 	row.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetched)
 	rows, err := s.db.QueryContext(ctx, `SELECT trade_date, market, code, name, asset_type, close_minor, change_bp, turnover_fen, COALESCE(source_time,'') FROM market_rank_entries WHERE snapshot_id=? ORDER BY rank`, row.ID)
 	if err != nil {
@@ -346,4 +367,53 @@ func (s *Store) LatestMarketSnapshot(ctx context.Context, kind market.RankingKin
 		row.Entries = append(row.Entries, quote)
 	}
 	return row, rows.Err()
+}
+
+func (s *Store) SaveMarketRefreshStatus(ctx context.Context, mode market.SnapshotMode, attemptedAt time.Time, succeeded bool, errors map[string]string) (MarketRefreshStatusRow, error) {
+	if mode != market.SnapshotModeClose && mode != market.SnapshotModeLive {
+		return MarketRefreshStatusRow{}, fmt.Errorf("unsupported market refresh mode %q", mode)
+	}
+	if errors == nil {
+		errors = map[string]string{}
+	}
+	rawErrors, err := json.Marshal(errors)
+	if err != nil {
+		return MarketRefreshStatusRow{}, fmt.Errorf("encode market refresh errors: %w", err)
+	}
+	attemptedAt = attemptedAt.UTC()
+	var successfulAt any
+	if succeeded {
+		successfulAt = attemptedAt.Format(time.RFC3339Nano)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO market_refresh_status(snapshot_mode, last_attempt_at, last_success_at, errors_json)
+		VALUES(?,?,?,?)
+		ON CONFLICT(snapshot_mode) DO UPDATE SET
+			last_attempt_at=excluded.last_attempt_at,
+			last_success_at=CASE WHEN excluded.last_success_at IS NULL THEN market_refresh_status.last_success_at ELSE excluded.last_success_at END,
+			errors_json=excluded.errors_json`, mode, attemptedAt.Format(time.RFC3339Nano), successfulAt, string(rawErrors)); err != nil {
+		return MarketRefreshStatusRow{}, fmt.Errorf("save market refresh status: %w", err)
+	}
+	return s.MarketRefreshStatus(ctx, mode)
+}
+
+func (s *Store) MarketRefreshStatus(ctx context.Context, mode market.SnapshotMode) (MarketRefreshStatusRow, error) {
+	row := MarketRefreshStatusRow{Mode: mode, Errors: map[string]string{}}
+	var attempted, successful sql.NullString
+	var rawErrors string
+	err := s.db.QueryRowContext(ctx, `SELECT last_attempt_at, last_success_at, errors_json FROM market_refresh_status WHERE snapshot_mode=?`, mode).Scan(&attempted, &successful, &rawErrors)
+	if err == sql.ErrNoRows {
+		return row, nil
+	}
+	if err != nil {
+		return MarketRefreshStatusRow{}, fmt.Errorf("load market refresh status: %w", err)
+	}
+	row.LastAttemptAt, _ = time.Parse(time.RFC3339Nano, attempted.String)
+	if successful.Valid {
+		stamp, _ := time.Parse(time.RFC3339Nano, successful.String)
+		row.LastSuccessfulAt = &stamp
+	}
+	if err := json.Unmarshal([]byte(rawErrors), &row.Errors); err != nil {
+		return MarketRefreshStatusRow{}, fmt.Errorf("decode market refresh status: %w", err)
+	}
+	return row, nil
 }

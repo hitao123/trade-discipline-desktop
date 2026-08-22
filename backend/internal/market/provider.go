@@ -12,6 +12,17 @@ const (
 	KindETF   RankingKind = "etf"
 )
 
+type SnapshotMode string
+
+const (
+	SnapshotModeClose SnapshotMode = "close"
+	SnapshotModeLive  SnapshotMode = "live"
+)
+
+type RankingProvider interface {
+	FetchRankings(ctx context.Context, kind RankingKind) ([]Quote, error)
+}
+
 type InstrumentKey struct {
 	Market string `json:"market"`
 	Code   string `json:"code"`

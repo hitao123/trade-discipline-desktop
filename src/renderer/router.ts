@@ -1,6 +1,7 @@
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import ExecutionsView from './views/ExecutionsView.vue'
+import AllocationView from './views/AllocationView.vue'
 import MarketView from './views/MarketView.vue'
 import PlansView from './views/PlansView.vue'
 import PositionsView from './views/PositionsView.vue'
@@ -18,6 +19,7 @@ export function createAppRouter() {
       { path: '/plans', name: 'plans', component: PlansView },
       { path: '/executions', name: 'executions', component: ExecutionsView },
       { path: '/positions', name: 'positions', component: PositionsView },
+      { path: '/allocation', name: 'allocation', component: AllocationView },
       { path: '/market', name: 'market', component: MarketView },
       { path: '/reviews', name: 'reviews', component: WeeklyReviewView },
       { path: '/settings', name: 'settings', component: SettingsView },

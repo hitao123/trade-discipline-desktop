@@ -83,6 +83,82 @@ func authorizedRequest(t *testing.T, method, endpoint string, body []byte) *http
 	return req
 }
 
+func TestAllocationAPITracksGoalAndAppendsManualValues(t *testing.T) {
+	server := newAPIServer(t)
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/allocation", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("allocation status=%d", response.StatusCode)
+	}
+	var initial struct {
+		OK   bool                       `json:"ok"`
+		Data service.AllocationOverview `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&initial); err != nil {
+		t.Fatal(err)
+	}
+	if !initial.OK || initial.Data.CurrentTotalFen != 20_000_000 || initial.Data.TargetTotalFen != 22_000_000 || initial.Data.ReturnBP != 0 {
+		t.Fatalf("unexpected allocation overview: %#v", initial.Data)
+	}
+
+	recorded, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/allocation/items/semiconductor-equipment-etf-159558/value-events", []byte(`{"valueFen":1250000,"observedAt":"2026-08-12T08:00:00Z"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recorded.Body.Close()
+	if recorded.StatusCode != http.StatusCreated {
+		t.Fatalf("record value status=%d", recorded.StatusCode)
+	}
+
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/allocation", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var updated struct {
+		Data service.AllocationOverview `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Data.CurrentTotalFen != 20_250_000 || updated.Data.ReturnBP != 125 || updated.Data.GoalGapFen != 1_750_000 {
+		t.Fatalf("unexpected updated allocation overview: %#v", updated.Data)
+	}
+}
+
+func TestAllocationAPIRequiresRevisionReason(t *testing.T) {
+	server := newAPIServer(t)
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/allocation", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var current struct {
+		Data service.AllocationOverview `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&current); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(struct {
+		Reason string                 `json:"reason"`
+		Draft  domain.AllocationDraft `json:"draft"`
+	}{Draft: current.Data.Version.Draft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPut, server.URL+"/api/allocation", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("missing reason status=%d", response.StatusCode)
+	}
+}
+
 func TestMarketHistoryAPIRefreshesAndReadsCache(t *testing.T) {
 	provider := apiMarketProvider{daily: []market.DailyBar{{
 		TradeDate: "2026-08-11", Market: "SH", Code: "600001", CloseMinor: 1_020,
@@ -175,6 +251,32 @@ func TestMarketOverviewAPIReadsCacheAndRejectsInvalidRange(t *testing.T) {
 	}
 }
 
+func TestMarketRefreshStatusAPIReadsBothModes(t *testing.T) {
+	server, db := newMarketAPIServer(t, apiMarketProvider{})
+	now := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)
+	if _, err := db.SaveMarketRefreshStatus(context.Background(), market.SnapshotModeClose, now, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SaveMarketRefreshStatus(context.Background(), market.SnapshotModeLive, now, false, map[string]string{"stock": "market closed"}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/market/refresh-status", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+	var envelope struct {
+		OK   bool                                    `json:"ok"`
+		Data map[string]store.MarketRefreshStatusRow `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil || !envelope.OK || envelope.Data["close"].LastSuccessfulAt == nil || envelope.Data["live"].Errors["stock"] != "market closed" {
+		t.Fatalf("refresh status=%#v err=%v", envelope, err)
+	}
+}
+
 func TestCreateRejectedPlanThroughAPI(t *testing.T) {
 	server := newAPIServer(t)
 	draft := domain.TradePlanDraft{
@@ -205,5 +307,59 @@ func TestCreateRejectedPlanThroughAPI(t *testing.T) {
 	}
 	if !envelope.OK || envelope.Data.Status != "rejected" || envelope.Data.Validation.Findings[0].Code != "BOARD_LOT_REQUIRED" {
 		t.Fatalf("unexpected response: %#v", envelope)
+	}
+}
+
+func TestPreTradeConfirmationAPIRequiresAttestations(t *testing.T) {
+	server := newAPIServer(t)
+	planBody := []byte(`{"instrumentId":"hk-9988","thesis":"云业务利润率改善","falsification":"云收入降速","pricedExpectation":"温和复苏","evidence":["下季云收入"],"breakCondition":"云收入同比转负","exitCondition":"逻辑破坏","entryLowMinor":11000,"entryHighMinor":12000,"riskExitMinor":9000,"quantity":100,"estimatedCostFen":1200000,"maxPlanLossFen":360000,"stressDropBP":3000,"referencePriceAt":"2026-08-12T07:00:00Z","validUntil":"2026-08-19T08:00:00Z"}`)
+	created, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/plans", planBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	var plan struct {
+		Data service.Plan `json:"data"`
+	}
+	if err := json.NewDecoder(created.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
+	missing := []byte(`{"startedAt":"2026-08-12T07:59:30Z","noFomo":false,"noLossRecovery":true,"noAveragingDown":true}`)
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/plans/"+plan.Data.ID+"/pre-trade-confirmations", missing))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("attestation response=%d", response.StatusCode)
+	}
+	valid := []byte(`{"startedAt":"2026-08-12T07:59:30Z","noFomo":true,"noLossRecovery":true,"noAveragingDown":true}`)
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/plans/"+plan.Data.ID+"/pre-trade-confirmations", valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("confirmation response=%d", response.StatusCode)
+	}
+}
+
+func TestMonitorSettingsAPIReadsDefaultAndSavesInterval(t *testing.T) {
+	server := newAPIServer(t)
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/monitor/settings", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("default settings status=%d", response.StatusCode)
+	}
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPut, server.URL+"/api/monitor/settings", []byte(`{"interval":"15m"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("save settings status=%d", response.StatusCode)
 	}
 }

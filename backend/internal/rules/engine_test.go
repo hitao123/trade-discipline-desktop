@@ -73,6 +73,13 @@ func TestEvaluatePlanRejectsUnderstatedEstimatedCost(t *testing.T) {
 	assertFinding(t, got, "ESTIMATED_COST_UNDERSTATED", SeverityHard)
 }
 
+func TestEvaluatePlanRejectsIncompleteTargetExitRange(t *testing.T) {
+	p := validAlibabaPlan()
+	p.TargetExitLowMinor = 15_000
+	got := EvaluatePlan(fixedNow, initialRule(), emptyPortfolio(), p)
+	assertFinding(t, got, "TARGET_EXIT_RANGE_INVALID", SeverityHard)
+}
+
 func TestEvaluatePlanRejectsAveragingDown(t *testing.T) {
 	state := emptyPortfolio()
 	state.Positions["hk-9988"] = domain.PositionState{InstrumentID: "hk-9988", Quantity: 100, UnrealizedPnLFen: -120_000}
@@ -91,8 +98,38 @@ func TestTencentRequiresTwentyTradingDaysAndScoreNinety(t *testing.T) {
 	state := emptyPortfolio()
 	state.AlibabaObservationTradingDays = 19
 	state.DisciplineScoreBP = 9_100
-	got := EvaluatePlan(fixedNow, initialRule(), state, validTencentPlan())
+	rule := initialRule()
+	rule.EnforceTencentSequenceGate = true
+	got := EvaluatePlan(fixedNow, rule, state, validTencentPlan())
 	assertFinding(t, got, "TENCENT_SEQUENCE_GATE", SeverityHard)
+}
+
+func TestTencentSequenceGateExplainsConfiguredThresholds(t *testing.T) {
+	state := emptyPortfolio()
+	state.AlibabaObservationTradingDays = 14
+	state.DisciplineScoreBP = 8_400
+	rule := initialRule()
+	rule.EnforceTencentSequenceGate = true
+	rule.TencentObservationDays = 15
+	rule.MinimumDisciplineScoreBP = 8_500
+
+	got := EvaluatePlan(fixedNow, rule, state, validTencentPlan())
+	for _, finding := range got.Findings {
+		if finding.Code == "TENCENT_SEQUENCE_GATE" && finding.Message == "腾讯计划需先完成阿里 15 个交易日观察且纪律分不低于 85" {
+			return
+		}
+	}
+	t.Fatalf("configured Tencent gate should show its current thresholds: %#v", got.Findings)
+}
+
+func TestDefaultRuleDoesNotBlockTencentSequence(t *testing.T) {
+	state := emptyPortfolio()
+	state.AlibabaObservationTradingDays = 0
+	state.DisciplineScoreBP = 0
+	got := EvaluatePlan(fixedNow, initialRule(), state, validTencentPlan())
+	if !got.Qualified {
+		t.Fatalf("default Tencent plan should not be blocked by the optional sequence gate: %#v", got)
+	}
 }
 
 func TestQualifiedAlibabaOneLot(t *testing.T) {
@@ -106,7 +143,9 @@ func TestQualifiedTencentAfterDisciplineGate(t *testing.T) {
 	state := emptyPortfolio()
 	state.AlibabaObservationTradingDays = 20
 	state.DisciplineScoreBP = 9_000
-	got := EvaluatePlan(fixedNow, initialRule(), state, validTencentPlan())
+	rule := initialRule()
+	rule.EnforceTencentSequenceGate = true
+	got := EvaluatePlan(fixedNow, rule, state, validTencentPlan())
 	if !got.Qualified {
 		t.Fatalf("unexpected decision: %#v", got)
 	}

@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 	}
 	if plan.RiskExitMinor <= 0 || (plan.EntryLowMinor > 0 && plan.RiskExitMinor >= plan.EntryLowMinor) {
 		add("RISK_EXIT_INVALID", "riskExitMinor", "风险退出价必须大于零且低于计划买入区间")
+	}
+	if (plan.TargetExitLowMinor == 0) != (plan.TargetExitHighMinor == 0) ||
+		plan.TargetExitLowMinor < 0 || plan.TargetExitHighMinor < 0 ||
+		(plan.TargetExitLowMinor > 0 && plan.TargetExitHighMinor < plan.TargetExitLowMinor) {
+		add("TARGET_EXIT_RANGE_INVALID", "targetExitLowMinor", "目标/估值退出区间必须同时填写，且上限不得低于下限")
 	}
 	if plan.FearScore < 0 || plan.FearScore > 10 || plan.GreedScore < 0 || plan.GreedScore > 10 || plan.RevengeScore < 0 || plan.RevengeScore > 10 {
 		add("EMOTION_SCORE_INVALID", "revengeScore", "情绪评分必须在 0 到 10 之间")
@@ -144,8 +150,8 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 	if chinaExposure > rule.ChinaTechLimitFen {
 		add("CHINA_TECH_EXPOSURE_LIMIT", "estimatedCostFen", "计划后中国科技敞口超过 80,000 元")
 	}
-	if plan.Code == "0700.HK" && (portfolio.AlibabaObservationTradingDays < rule.TencentObservationDays || portfolio.DisciplineScoreBP < rule.MinimumDisciplineScoreBP) {
-		add("TENCENT_SEQUENCE_GATE", "instrumentId", "腾讯计划需先完成阿里 20 个交易日观察且纪律分不低于 90")
+	if rule.EnforceTencentSequenceGate && plan.Code == "0700.HK" && (portfolio.AlibabaObservationTradingDays < rule.TencentObservationDays || portfolio.DisciplineScoreBP < rule.MinimumDisciplineScoreBP) {
+		add("TENCENT_SEQUENCE_GATE", "instrumentId", fmt.Sprintf("腾讯计划需先完成阿里 %d 个交易日观察且纪律分不低于 %d", rule.TencentObservationDays, rule.MinimumDisciplineScoreBP/100))
 	}
 
 	decision.Qualified = len(decision.Findings) == 0

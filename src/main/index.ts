@@ -2,14 +2,16 @@ import { copyFile, mkdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
 
+import { processMonitorAlerts, type PendingMonitorNotificationAlert } from './monitor-notifications'
 import { startSidecar, type SidecarHandle } from './sidecar'
 
 let mainWindow: BrowserWindow | null = null
 let sidecar: SidecarHandle | null = null
 let shuttingDown = false
 let quitAfterSidecarStops = false
+let monitorNotificationTimer: ReturnType<typeof setInterval> | undefined
 const sessionToken = randomBytes(32).toString('hex')
 
 function dataPaths() {
@@ -35,6 +37,7 @@ async function startBackend() {
       if (!shuttingDown && sidecar) showBackendFailure(`本地后端意外退出（${code ?? signal ?? 'unknown'}）`)
     },
   })
+  startMonitorNotificationPolling()
 }
 
 async function apiRequest<T>(endpoint: string, body?: unknown): Promise<T> {
@@ -48,6 +51,41 @@ async function apiRequest<T>(endpoint: string, body?: unknown): Promise<T> {
   const envelope = await response.json() as { ok: boolean; data?: T; error?: { message: string } }
   if (!response.ok || !envelope.ok) throw new Error(envelope.error?.message ?? `本地请求失败（${response.status}）`)
   return envelope.data as T
+}
+
+async function pollMonitorNotifications() {
+  if (!sidecar || !Notification.isSupported()) return
+  try {
+    const alerts = await apiRequest<PendingMonitorNotificationAlert[]>('/api/monitor/alerts/unnotified')
+    await processMonitorAlerts(alerts, (alert, content) => {
+      const notification = new Notification(content)
+      notification.on('click', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.show()
+          mainWindow.focus()
+          mainWindow.webContents.send('monitor-alert-opened', alert.id)
+        }
+      })
+      notification.show()
+    }, async alertID => apiRequest(`/api/monitor/alerts/${alertID}/notified`, {}))
+  }
+  catch (error) {
+    console.error('[monitor-notification]', error)
+  }
+}
+
+function startMonitorNotificationPolling() {
+  stopMonitorNotificationPolling()
+  void pollMonitorNotifications()
+  monitorNotificationTimer = setInterval(() => { void pollMonitorNotifications() }, 60_000)
+}
+
+function stopMonitorNotificationPolling() {
+  if (monitorNotificationTimer !== undefined) {
+    clearInterval(monitorNotificationTimer)
+    monitorNotificationTimer = undefined
+  }
 }
 
 async function createWindow() {
@@ -115,6 +153,7 @@ function registerIPC() {
 }
 
 async function restartBackend() {
+  stopMonitorNotificationPolling()
   const old = sidecar
   sidecar = null
   await old?.stop()
@@ -131,6 +170,7 @@ async function restoreBackup(): Promise<boolean> {
   const safetyBackup = path.join(paths.backups, `before-restore-${timestamp()}.db`)
   await apiRequest('/api/backup/export', { path: safetyBackup })
   const old = sidecar
+  stopMonitorNotificationPolling()
   sidecar = null
   await old?.stop()
   const temporary = `${paths.database}.restore-tmp`
@@ -170,6 +210,7 @@ else {
     if (!sidecar || quitAfterSidecarStops) return
     event.preventDefault()
     shuttingDown = true
+    stopMonitorNotificationPolling()
     const active = sidecar
     sidecar = null
     void active.stop().finally(() => {

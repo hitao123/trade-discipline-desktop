@@ -8,14 +8,15 @@ import (
 )
 
 type Service struct {
-	store          *store.Store
-	now            func() time.Time
-	marketProvider market.Provider
+	store           *store.Store
+	now             func() time.Time
+	marketProvider  market.Provider
+	rankingFallback market.RankingProvider
 }
 
 func New(store *store.Store, now func() time.Time) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{store: store, now: now, marketProvider: &market.EastmoneyProvider{}}
+	return &Service{store: store, now: now, marketProvider: &market.EastmoneyProvider{}, rankingFallback: market.SinaProvider{}}
 }

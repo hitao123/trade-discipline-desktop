@@ -17,7 +17,7 @@ type Store struct {
 	path string
 }
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 5
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -59,6 +59,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration statement: %w", err)
 		}
 	}
+	if err := ensureMarketSnapshotMode(ctx, tx); err != nil {
+		return err
+	}
 
 	ruleJSON, err := json.Marshal(rules.InitialSnapshot())
 	if err != nil {
@@ -92,8 +95,44 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
 		return fmt.Errorf("record market history migration: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return fmt.Errorf("record discipline loop migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return fmt.Errorf("record allocation migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return fmt.Errorf("record market mode migration: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
+	}
+	return nil
+}
+
+func ensureMarketSnapshotMode(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(market_snapshots)`)
+	if err != nil {
+		return fmt.Errorf("inspect market snapshot schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("scan market snapshot schema: %w", err)
+		}
+		if name == "snapshot_mode" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read market snapshot schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE market_snapshots ADD COLUMN snapshot_mode TEXT NOT NULL DEFAULT 'close' CHECK(snapshot_mode IN ('close','live'))`); err != nil {
+		return fmt.Errorf("add market snapshot mode: %w", err)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import type {
   MarketQuote,
   MarketRange,
   MarketResult,
+  LiveMarketResult,
 } from '@/renderer/types'
 
 type Requester = (path: string, init?: RequestInit) => Promise<unknown>
@@ -18,10 +19,12 @@ interface UseMarketHistoryOptions {
 export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
   const request: Requester = options.request ?? ((path, init) => api.request<unknown>(path, init))
   const market = shallowRef<MarketResult>()
+  const liveMarket = shallowRef<LiveMarketResult>()
   const overview = shallowRef<MarketOverviewResult>()
   const history = shallowRef<MarketHistoryResult>()
   const selected = shallowRef<MarketQuote>()
   const tab = shallowRef<'stock' | 'etf'>('stock')
+  const mode = shallowRef<'close' | 'live'>('close')
   const range = shallowRef<MarketRange>('3m')
   const busy = shallowRef(false)
   const historyBusy = shallowRef(false)
@@ -29,7 +32,9 @@ export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
   const notice = shallowRef('')
   const refreshedThisSession = new Set<string>()
 
-  const activeSnapshot = computed(() => tab.value === 'stock' ? market.value?.stock : market.value?.etf)
+  const activeMarket = computed<MarketResult | LiveMarketResult | undefined>(() => mode.value === 'close' ? market.value : liveMarket.value)
+  const activeSnapshot = computed(() => tab.value === 'stock' ? activeMarket.value?.stock : activeMarket.value?.etf)
+  const activeStatus = computed(() => activeMarket.value?.status)
   const selectedKey = computed(() => selected.value ? selected.value.market + '-' + selected.value.code : '')
 
   async function requestAs<T>(path: string, init?: RequestInit) {
@@ -43,15 +48,19 @@ export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
   async function load() {
     busy.value = true
     error.value = ''
-    const [marketResult, overviewResult] = await Promise.allSettled([
+    const [marketResult, overviewResult, liveResult] = await Promise.allSettled([
       requestAs<MarketResult>('/api/market/snapshots/latest'),
       requestAs<MarketOverviewResult>('/api/market/overview?range=' + range.value),
+      requestAs<LiveMarketResult>('/api/market/live/latest'),
     ])
     if (marketResult.status === 'fulfilled') {
       market.value = marketResult.value
     }
     if (overviewResult.status === 'fulfilled') {
       overview.value = overviewResult.value
+    }
+    if (liveResult.status === 'fulfilled') {
+      liveMarket.value = liveResult.value
     }
     const failures = [marketResult, overviewResult]
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -74,6 +83,26 @@ export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
     }
     catch (cause) {
       error.value = cause instanceof Error ? cause.message + '。最近成功数据仍保留在本机。' : '市场刷新失败'
+    }
+    finally {
+      busy.value = false
+    }
+  }
+
+  async function refreshLive() {
+    busy.value = true
+    error.value = ''
+    notice.value = ''
+    try {
+      liveMarket.value = await requestAs<LiveMarketResult>('/api/market/live/refresh', { method: 'POST' })
+      notice.value = liveMarket.value.state === 'market_closed'
+        ? '当前不在 A 股交易时段，未请求实时行情；将保留最近一次本地快照。'
+        : Object.keys(liveMarket.value.errors ?? {}).length > 0
+          ? '部分实时来源暂时不可用，失败部分继续显示本地快照。'
+          : '实时成交额数据已更新；仅供观察，不会发出交易指令。'
+    }
+    catch (cause) {
+      error.value = cause instanceof Error ? cause.message + '。最近成功数据仍保留在本机。' : '实时行情刷新失败'
     }
     finally {
       busy.value = false
@@ -155,24 +184,34 @@ export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
     tab.value = nextTab
   }
 
+  function setMode(nextMode: 'close' | 'live') {
+    mode.value = nextMode
+    notice.value = ''
+  }
+
   return {
     market,
+    liveMarket,
     overview,
     history,
     selected,
     tab,
+    mode,
     range,
     busy,
     historyBusy,
     error,
     notice,
     activeSnapshot,
+    activeStatus,
     selectedKey,
     load,
     refreshAll,
+    refreshLive,
     selectHistory,
     refreshSelected,
     setRange,
     setTab,
+    setMode,
   }
 }
