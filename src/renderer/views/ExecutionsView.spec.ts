@@ -18,9 +18,9 @@ describe('ExecutionsView', () => {
 
   it('allows honest recording after a serious violation warning', async () => {
     render(ExecutionsView)
-    expect(await screen.findByText('无计划成交将记为严重违规，但不会阻止保存。')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '确认如实记录' })).toBeEnabled()
-    expect(screen.getByText('这里只补录，不会向券商发送订单')).toBeTruthy()
+	  expect(await screen.findByText('无计划也可以如实保存，系统会记入纪律记录。')).toBeTruthy()
+	  expect(screen.getByRole('button', { name: '立即如实入账' })).toBeEnabled()
+	  expect(screen.getByText('只写事实，不连接券商，也不会下单。')).toBeTruthy()
   })
 
   it('can append a reversal with a required reason', async () => {
@@ -32,6 +32,7 @@ describe('ExecutionsView', () => {
       throw new Error(`unexpected ${path}`)
     })
     render(ExecutionsView)
+	await fireEvent.click(await screen.findByRole('button', { name: '完整补录' }))
     await screen.findByLabelText('证券')
     await fireEvent.update(screen.getByLabelText('本币成交价'), '120')
     await fireEvent.update(screen.getByLabelText('本币成交金额'), '12000')
@@ -41,5 +42,20 @@ describe('ExecutionsView', () => {
     await fireEvent.click(screen.getByRole('button', { name: '追加冲正' }))
     expect(await screen.findByText('原成交已追加冲正')).toBeTruthy()
     await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/execution-1/reverse', expect.objectContaining({ method: 'POST' })))
+  })
+
+  it('uses the quick endpoint and confirms immediate portfolio update', async () => {
+    request.mockImplementation((path: string, init?: RequestInit) => {
+	  if (path === '/api/instruments') return Promise.resolve([{ id: 'hk-9988', market: 'HK', code: '9988.HK', name: '阿里巴巴-W', assetType: 'stock', currency: 'HKD', lotSize: 100, isChinaTech: true }])
+	  if (path === '/api/plans') return Promise.resolve([])
+	  if (path === '/api/executions/quick' && init?.method === 'POST') return Promise.resolve({ id: 'execution-quick', classification: 'serious_violation', violationCode: 'UNPLANNED_EXECUTION', position: { quantity: 100 }, cashFen: 18_795_000, pendingReview: true })
+	  throw new Error(`unexpected ${path}`)
+	})
+	render(ExecutionsView)
+	await fireEvent.update(await screen.findByLabelText('成交均价'), '120')
+	await fireEvent.update(screen.getByLabelText('券商实际人民币扣款/到账（元）'), '12050')
+	await fireEvent.click(screen.getByRole('button', { name: '立即如实入账' }))
+	expect(await screen.findByText('已加入待复盘')).toBeTruthy()
+	await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/quick', expect.objectContaining({ method: 'POST' })))
   })
 })
