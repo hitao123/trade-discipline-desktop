@@ -12,11 +12,12 @@ type Service struct {
 	now             func() time.Time
 	marketProvider  market.Provider
 	rankingFallback market.RankingProvider
+	quoteFallback   market.QuoteProvider
 }
 
 func New(store *store.Store, now func() time.Time) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{store: store, now: now, marketProvider: &market.EastmoneyProvider{}, rankingFallback: market.SinaProvider{}}
+	return &Service{store: store, now: now, marketProvider: &market.EastmoneyProvider{}, rankingFallback: market.SinaProvider{}, quoteFallback: market.TencentQuoteProvider{}}
 }

@@ -22,6 +22,7 @@ func openExecutionService(t *testing.T) *Service {
 	}
 	svc := New(db, func() time.Time { return time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC) })
 	svc.SetMarketRankingFallback(fakeMarketProvider{})
+	svc.SetMarketQuoteFallback(nil)
 	return svc
 }
 

@@ -76,8 +76,15 @@ func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
 		keys = append(keys, item.key)
 	}
 	quotes, err := s.marketProvider.FetchQuotes(ctx, keys)
+	if err != nil && s.quoteFallback != nil {
+		fallbackQuotes, fallbackErr := s.quoteFallback.FetchQuotes(ctx, keys)
+		if fallbackErr == nil && validQuoteFallback(now, keys, fallbackQuotes) {
+			quotes = fallbackQuotes
+			err = nil
+		}
+	}
 	if err != nil {
-		status.LastError = err.Error()
+		status.LastError = "报价来源暂不可用，未评估提醒"
 		return s.finishMonitorRun(ctx, MonitorResult{Status: status})
 	}
 	byCode := make(map[string]market.Quote, len(quotes))

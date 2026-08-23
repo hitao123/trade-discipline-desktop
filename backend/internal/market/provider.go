@@ -23,6 +23,10 @@ type RankingProvider interface {
 	FetchRankings(ctx context.Context, kind RankingKind) ([]Quote, error)
 }
 
+type QuoteProvider interface {
+	FetchQuotes(ctx context.Context, keys []InstrumentKey) ([]Quote, error)
+}
+
 type InstrumentKey struct {
 	Market string `json:"market"`
 	Code   string `json:"code"`

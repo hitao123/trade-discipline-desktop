@@ -310,6 +310,39 @@ func TestRefreshMarketKeepsRankingHealthyWhenQuotesUseCache(t *testing.T) {
 	}
 }
 
+func TestRefreshMarketUsesFreshQuoteFallbackAfterPrimaryFailure(t *testing.T) {
+	svc := openExecutionService(t)
+	now := svc.now()
+	svc.SetMarketProvider(fakeMarketProvider{
+		stock:     []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "600001", Name: "示例股票", AssetType: market.KindStock, CloseMinor: 1_000, TurnoverFen: 9_000_000, Source: "fixture", SourceTime: now}},
+		etf:       []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "510300", Name: "沪深300ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 8_000_000, Source: "fixture", SourceTime: now}},
+		quotesErr: errors.New("primary EOF"),
+	})
+	fallbackQuotes := []market.Quote{
+		{TradeDate: "2026-08-12", Market: "HK", Code: "0700.HK", CloseMinor: 48_020, Source: "tencent-public-quote", SourceTime: now},
+		{TradeDate: "2026-08-12", Market: "HK", Code: "9988.HK", CloseMinor: 12_200, Source: "tencent-public-quote", SourceTime: now},
+		{TradeDate: "2026-08-12", Market: "SH", Code: "510300", CloseMinor: 420, Source: "tencent-public-quote", SourceTime: now},
+		{TradeDate: "2026-08-12", Market: "SH", Code: "600001", CloseMinor: 1_000, Source: "tencent-public-quote", SourceTime: now},
+	}
+	var fallbackSeen []market.InstrumentKey
+	svc.SetMarketQuoteFallback(fakeMarketProvider{quotes: fallbackQuotes, seenKeys: &fallbackSeen})
+
+	result, err := svc.RefreshMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Health["quotes"].State != market.HealthLive || result.Health["quotes"].Source != "tencent-public-quote" {
+		t.Fatalf("quote fallback health=%#v errors=%#v fallbackSeen=%#v", result.Health["quotes"], result.Errors, fallbackSeen)
+	}
+	quotes, err := svc.store.LatestQuotes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote, ok := quotes["hk-9988"]; !ok || quote.Source != "tencent-public-quote" {
+		t.Fatalf("stored fallback quotes=%#v", quotes)
+	}
+}
+
 func TestRefreshMarketStillRefreshesOverviewWhenBothRankingsFail(t *testing.T) {
 	svc := openExecutionService(t)
 	svc.SetMarketProvider(fakeMarketProvider{

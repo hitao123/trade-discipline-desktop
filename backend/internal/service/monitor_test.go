@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -124,6 +125,24 @@ func TestRunMonitorOnceSkipsQuoteWithPreviousTradeDate(t *testing.T) {
 	svc.SetMarketProvider(fakeMarketProvider{quotes: []market.Quote{{TradeDate: "2026-08-11", Market: "HK", Code: "9988.HK", CloseMinor: 8_900, Source: "fixture", SourceTime: svc.now()}}})
 	result, err := svc.RunMonitorOnce(context.Background())
 	if err != nil || result.Triggered != 0 || result.Checked != 0 || result.Status.LastError == "" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestRunMonitorOnceUsesFreshQuoteFallback(t *testing.T) {
+	svc := openExecutionService(t)
+	plan, err := svc.CreatePlan(context.Background(), validPlanDraft())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordExecution(context.Background(), ExecutionDraft{PlanID: plan.ID, InstrumentID: "hk-9988", Side: "buy", Quantity: 100, SettlementFen: -1_205_000, ExecutedAt: svc.now()}); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetMarketProvider(fakeMarketProvider{quotesErr: errors.New("primary EOF")})
+	svc.SetMarketQuoteFallback(fakeMarketProvider{quotes: []market.Quote{{TradeDate: "2026-08-12", Market: "HK", Code: "9988.HK", CloseMinor: 8_900, Source: "tencent-public-quote", SourceTime: svc.now()}}})
+
+	result, err := svc.RunMonitorOnce(context.Background())
+	if err != nil || result.Triggered != 1 || result.Status.LastError != "" {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }

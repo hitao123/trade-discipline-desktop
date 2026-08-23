@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/local/trade-discipline-desktop/backend/internal/market"
@@ -53,6 +54,10 @@ func (s *Service) SetMarketProvider(provider market.Provider) {
 
 func (s *Service) SetMarketRankingFallback(provider market.RankingProvider) {
 	s.rankingFallback = provider
+}
+
+func (s *Service) SetMarketQuoteFallback(provider market.QuoteProvider) {
+	s.quoteFallback = provider
 }
 
 func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, returnErr error) {
@@ -118,6 +123,13 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 		result.Health["quotes"] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "LOCAL_QUERY_FAILED"}
 	} else {
 		quotes, err := s.marketProvider.FetchQuotes(ctx, keys)
+		if err != nil && s.quoteFallback != nil {
+			fallbackQuotes, fallbackErr := s.quoteFallback.FetchQuotes(ctx, keys)
+			if fallbackErr == nil && validQuoteFallback(attemptedAt, keys, fallbackQuotes) {
+				quotes = fallbackQuotes
+				err = nil
+			}
+		}
 		if err != nil {
 			result.Errors["quotes"] = "持仓参考报价暂未更新（东方财富公开接口临时不可用；已保留最近一次成功报价）"
 			result.Health["quotes"] = s.cachedQuoteHealth(ctx, "PRIMARY_TEMPORARY_FAILURE")
@@ -169,6 +181,28 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 		return result, fmt.Errorf("股票、ETF 和市场概览均无可用数据")
 	}
 	return result, nil
+}
+
+func validQuoteFallback(now time.Time, keys []market.InstrumentKey, quotes []market.Quote) bool {
+	if len(keys) == 0 {
+		return true
+	}
+	if len(quotes) == 0 {
+		return false
+	}
+	wanted := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		wanted[strings.ToUpper(key.Market)+":"+strings.ToUpper(key.Code)] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(quotes))
+	for _, quote := range quotes {
+		key := strings.ToUpper(quote.Market) + ":" + strings.ToUpper(quote.Code)
+		if _, ok := wanted[key]; !ok || !freshAlertQuote(now.UTC(), quote) {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen) == len(wanted)
 }
 
 func refreshedSnapshotHealth(snapshot store.MarketSnapshotRow) market.ComponentHealth {
