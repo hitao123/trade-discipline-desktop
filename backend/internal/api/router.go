@@ -31,7 +31,10 @@ func NewRouter(svc *service.Service, token string) http.Handler {
 	mux.HandleFunc("POST /api/plans/{id}/pre-trade-confirmations", router.createPreTradeConfirmation)
 	mux.HandleFunc("GET /api/plans/{id}/pre-trade-confirmations/latest", router.latestPreTradeConfirmation)
 	mux.HandleFunc("POST /api/executions", router.createExecution)
+	mux.HandleFunc("POST /api/executions/quick", router.createQuickExecution)
 	mux.HandleFunc("POST /api/executions/{id}/reverse", router.reverseExecution)
+	mux.HandleFunc("GET /api/post-trade-reviews", router.pendingPostTradeReviews)
+	mux.HandleFunc("POST /api/post-trade-reviews/{executionID}/complete", router.completePostTradeReview)
 	mux.HandleFunc("GET /api/portfolio", router.portfolio)
 	mux.HandleFunc("GET /api/allocation", router.allocation)
 	mux.HandleFunc("PUT /api/allocation", router.reviseAllocation)
@@ -139,6 +142,33 @@ func (rt *Router) createExecution(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := rt.service.RecordExecution(r.Context(), draft)
 	writeResult(w, data, err, http.StatusCreated)
+}
+
+func (rt *Router) createQuickExecution(w http.ResponseWriter, r *http.Request) {
+	var draft service.QuickExecutionDraft
+	if err := decodeJSON(r, &draft); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_QUICK_EXECUTION", "极速补录内容格式无效", nil)
+		return
+	}
+	data, err := rt.service.RecordQuickExecution(r.Context(), draft)
+	writeResult(w, data, err, http.StatusCreated)
+}
+
+func (rt *Router) pendingPostTradeReviews(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.PendingPostTradeReviews(r.Context(), r.URL.Query().Get("periodStart"), r.URL.Query().Get("periodEnd"))
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) completePostTradeReview(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Note string `json:"note"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_POST_TRADE_REVIEW", "成交复盘内容格式无效", nil)
+		return
+	}
+	data, err := rt.service.CompletePostTradeReview(r.Context(), r.PathValue("executionID"), input.Note)
+	writeResult(w, data, err, http.StatusOK)
 }
 
 func (rt *Router) reverseExecution(w http.ResponseWriter, r *http.Request) {
@@ -447,7 +477,11 @@ func decodeJSON(r *http.Request, target any) error {
 
 func writeResult[T any](w http.ResponseWriter, data T, err error, status int) {
 	if err != nil {
-		writeFailure(w, http.StatusUnprocessableEntity, "BUSINESS_RULE", err.Error(), nil)
+		code := "BUSINESS_RULE"
+		if coded, ok := service.ErrorCode(err); ok {
+			code = coded
+		}
+		writeFailure(w, http.StatusUnprocessableEntity, code, err.Error(), nil)
 		return
 	}
 	writeSuccess(w, status, data)

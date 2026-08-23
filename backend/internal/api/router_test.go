@@ -83,6 +83,65 @@ func authorizedRequest(t *testing.T, method, endpoint string, body []byte) *http
 	return req
 }
 
+func TestQuickExecutionAndPostTradeReviewAPI(t *testing.T) {
+	server := newAPIServer(t)
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/executions/quick", []byte(`{"instrumentId":"hk-9988","side":"buy","quantity":100,"localPriceMinor":12000,"settlementFen":-1205000}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("quick status=%d", response.StatusCode)
+	}
+	var recorded struct {
+		OK   bool                     `json:"ok"`
+		Data service.ExecutionReceipt `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if !recorded.OK || !recorded.Data.PendingReview || recorded.Data.Position.Quantity != 100 {
+		t.Fatalf("recorded=%#v", recorded)
+	}
+
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/post-trade-reviews?periodStart=2026-08-10&periodEnd=2026-08-16", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var pending struct {
+		OK   bool                    `json:"ok"`
+		Data []store.PostTradeReview `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || len(pending.Data) != 1 {
+		t.Fatalf("pending status=%d data=%#v", response.StatusCode, pending)
+	}
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/reviews", []byte(`{"periodStart":"2026-08-10","periodEnd":"2026-08-16","nextAllowedAction":"只按计划行动"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var blocked Envelope[any]
+	if err := json.NewDecoder(response.Body).Decode(&blocked); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnprocessableEntity || blocked.Error == nil || blocked.Error.Code != "PENDING_POST_TRADE_REVIEW" {
+		t.Fatalf("blocked status=%d body=%#v", response.StatusCode, blocked)
+	}
+
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/post-trade-reviews/"+recorded.Data.ID+"/complete", []byte(`{"note":"追涨后补录，今后只按计划行动"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("complete status=%d", response.StatusCode)
+	}
+}
+
 func TestAllocationAPITracksGoalAndAppendsManualValues(t *testing.T) {
 	server := newAPIServer(t)
 	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/allocation", nil))

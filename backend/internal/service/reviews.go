@@ -28,6 +28,13 @@ func (s *Service) SaveWeeklyReview(ctx context.Context, draft WeeklyReviewDraft)
 	if strings.TrimSpace(draft.NextAllowedAction) == "" {
 		return store.WeeklyReviewRow{}, fmt.Errorf("请写明下周唯一允许动作")
 	}
+	pending, err := s.store.PendingPostTradeReviews(ctx, start, end.AddDate(0, 0, 1).Add(-time.Nanosecond))
+	if err != nil {
+		return store.WeeklyReviewRow{}, err
+	}
+	if len(pending) > 0 {
+		return store.WeeklyReviewRow{}, CodedError{Code: "PENDING_POST_TRADE_REVIEW", Message: fmt.Sprintf("本周还有 %d 笔成交待纪律复盘", len(pending))}
+	}
 	dashboard, err := s.Dashboard(ctx)
 	if err != nil {
 		return store.WeeklyReviewRow{}, err

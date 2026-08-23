@@ -39,9 +39,14 @@ type ExecutionReceipt struct {
 	Position       domain.PositionState `json:"position"`
 	CashFen        int64                `json:"cashFen"`
 	Cooldown       *CooldownReceipt     `json:"cooldown,omitempty"`
+	PendingReview  bool                 `json:"pendingReview"`
 }
 
 func (s *Service) RecordExecution(ctx context.Context, draft ExecutionDraft) (ExecutionReceipt, error) {
+	return s.recordExecution(ctx, draft, false)
+}
+
+func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, quickRecord bool) (ExecutionReceipt, error) {
 	code, lotSize, isChinaTech, err := s.store.Instrument(ctx, draft.InstrumentID)
 	if err != nil {
 		return ExecutionReceipt{}, err
@@ -151,6 +156,7 @@ func (s *Service) RecordExecution(ctx context.Context, draft ExecutionDraft) (Ex
 		Event: event, RuleVersionID: ruleID, Classification: classification, ViolationCode: violationCode,
 		ViolationFacts: map[string]any{"planId": draft.PlanID, "side": draft.Side, "quantity": draft.Quantity, "settlementFen": draft.SettlementFen},
 		Evidence:       draft.Evidence, BrokerReference: draft.BrokerReference, ReferencePriceMinor: draft.ReferencePriceMinor, ReferencePriceAt: draft.ReferencePriceAt,
+		QuickRecord: quickRecord,
 	}
 	if violationCode != "" {
 		previousViolations, err := s.store.CountViolations(ctx)
@@ -177,7 +183,7 @@ func (s *Service) RecordExecution(ctx context.Context, draft ExecutionDraft) (Ex
 	if err != nil {
 		return ExecutionReceipt{}, err
 	}
-	receipt := ExecutionReceipt{ID: result.ExecutionID, Classification: classification, ViolationCode: violationCode, Position: portfolio.Positions[draft.InstrumentID], CashFen: portfolio.AvailableCashFen}
+	receipt := ExecutionReceipt{ID: result.ExecutionID, Classification: classification, ViolationCode: violationCode, Position: portfolio.Positions[draft.InstrumentID], CashFen: portfolio.AvailableCashFen, PendingReview: quickRecord}
 	if input.Cooldown != nil {
 		receipt.Cooldown = &CooldownReceipt{ID: result.CooldownID, Reason: input.Cooldown.Reason, ExpectedEndsAt: input.Cooldown.ExpectedEndsAt}
 	}

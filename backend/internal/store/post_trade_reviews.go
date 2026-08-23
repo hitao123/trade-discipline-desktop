@@ -10,12 +10,18 @@ import (
 )
 
 type PostTradeReview struct {
-	ID          string     `json:"id"`
-	ExecutionID string     `json:"executionId"`
-	Status      string     `json:"status"`
-	Note        string     `json:"note"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	ID              string     `json:"id"`
+	ExecutionID     string     `json:"executionId"`
+	Status          string     `json:"status"`
+	Note            string     `json:"note"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+	InstrumentID    string     `json:"instrumentId,omitempty"`
+	Side            string     `json:"side,omitempty"`
+	Quantity        int        `json:"quantity,omitempty"`
+	LocalPriceMinor int64      `json:"localPriceMinor,omitempty"`
+	SettlementFen   int64      `json:"settlementFen,omitempty"`
+	ExecutedAt      time.Time  `json:"executedAt,omitempty"`
 }
 
 type ExecutionFXObservation struct {
@@ -34,7 +40,8 @@ func (s *Store) PostTradeReview(ctx context.Context, executionID string) (PostTr
 }
 
 func (s *Store) PendingPostTradeReviews(ctx context.Context, periodStart, periodEnd time.Time) ([]PostTradeReview, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.execution_id, r.status, r.note, r.created_at, r.completed_at
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.execution_id, r.status, r.note, r.created_at, r.completed_at,
+		e.instrument_id, e.event_type, e.quantity, e.local_price_minor, e.settlement_fen, e.executed_at
 		FROM post_trade_reviews r JOIN execution_events e ON e.id=r.execution_id
 		WHERE r.status='pending' AND e.executed_at>=? AND e.executed_at<=?
 		ORDER BY e.executed_at, r.created_at`, periodStart.UTC().Format(time.RFC3339Nano), periodEnd.UTC().Format(time.RFC3339Nano))
@@ -44,13 +51,29 @@ func (s *Store) PendingPostTradeReviews(ctx context.Context, periodStart, period
 	defer rows.Close()
 	items := make([]PostTradeReview, 0)
 	for rows.Next() {
-		item, err := scanPostTradeReview(rows)
+		item, err := scanPendingPostTradeReview(rows)
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func scanPendingPostTradeReview(row rowScanner) (PostTradeReview, error) {
+	var item PostTradeReview
+	var createdAt, executedAt string
+	var completedAt sql.NullString
+	if err := row.Scan(&item.ID, &item.ExecutionID, &item.Status, &item.Note, &createdAt, &completedAt, &item.InstrumentID, &item.Side, &item.Quantity, &item.LocalPriceMinor, &item.SettlementFen, &executedAt); err != nil {
+		return PostTradeReview{}, fmt.Errorf("scan pending post-trade review: %w", err)
+	}
+	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	item.ExecutedAt, _ = time.Parse(time.RFC3339Nano, executedAt)
+	if completedAt.Valid {
+		parsed, _ := time.Parse(time.RFC3339Nano, completedAt.String)
+		item.CompletedAt = &parsed
+	}
+	return item, nil
 }
 
 func (s *Store) CompletePostTradeReview(ctx context.Context, executionID, note string, completedAt time.Time) (PostTradeReview, error) {
