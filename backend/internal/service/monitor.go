@@ -90,8 +90,8 @@ func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
 		if !ok {
 			continue
 		}
-		if quote.SourceTime.After(now) || now.Sub(quote.SourceTime) > 20*time.Minute {
-			result.Status.LastError = "报价时间异常或已超过 20 分钟，未触发提醒"
+		if !freshAlertQuote(now, quote) {
+			result.Status.LastError = "报价不是当日有效数据，未触发提醒"
 			continue
 		}
 		result.Checked++
@@ -124,6 +124,20 @@ func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
 	}
 	result.Status.LastSuccessfulAt = &now
 	return s.finishMonitorRun(ctx, result)
+}
+
+func freshAlertQuote(now time.Time, quote market.Quote) bool {
+	if quote.SourceTime.IsZero() || quote.SourceTime.After(now) || now.Sub(quote.SourceTime) > 20*time.Minute {
+		return false
+	}
+	if quote.TradeDate == "" {
+		return true
+	}
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return false
+	}
+	return quote.TradeDate == now.In(location).Format("2006-01-02")
 }
 
 func (s *Service) finishMonitorRun(ctx context.Context, result MonitorResult) (MonitorResult, error) {

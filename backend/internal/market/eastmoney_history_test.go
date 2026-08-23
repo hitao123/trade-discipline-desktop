@@ -236,6 +236,23 @@ func TestFetchMarketMetricsFallsBackToSinaIndexTurnover(t *testing.T) {
 	}
 }
 
+func TestCombineMetricPointsPreservesDerivedSourceProvenance(t *testing.T) {
+	tradeDate := "2026-08-21"
+	left := []MetricPoint{{TradeDate: tradeDate, Source: "sina-public-metrics", ValueFen: 1}}
+	right := []MetricPoint{{TradeDate: tradeDate, Source: "sina-public-metrics", ValueFen: 2}}
+
+	combined := combineMetricPoints(left, right, MetricAShareTurnover)
+	if len(combined) != 1 || combined[0].Source != "sina-public-derived" {
+		t.Fatalf("same-source derived provenance=%#v", combined)
+	}
+
+	right[0].Source = "eastmoney-public-history"
+	combined = combineMetricPoints(left, right, MetricAShareTurnover)
+	if len(combined) != 1 || combined[0].Source != "mixed-public-derived" {
+		t.Fatalf("mixed-source derived provenance=%#v", combined)
+	}
+}
+
 func TestFetchDailyBarsDropsCurrentAShareSessionBeforeClose(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"klines":["2026-08-11,0,10.00,0,0,0,1000000","2026-08-12,0,10.20,0,0,0,2000000"]}}`))

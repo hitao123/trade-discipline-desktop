@@ -56,11 +56,11 @@ func (s *Service) SetMarketRankingFallback(provider market.RankingProvider) {
 }
 
 func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, returnErr error) {
-	result = MarketResult{Errors: make(map[string]string)}
+	result = MarketResult{Errors: make(map[string]string), Health: make(map[string]market.ComponentHealth)}
 	attemptedAt := s.now()
 	rankingsRefreshed := 0
 	defer func() {
-		status, err := s.store.SaveMarketRefreshStatus(ctx, market.SnapshotModeClose, attemptedAt, rankingsRefreshed == 2, result.Errors)
+		status, err := s.store.SaveMarketRefreshStatusWithHealth(ctx, market.SnapshotModeClose, attemptedAt, rankingsRefreshed == 2, result.Errors, result.Health)
 		if err != nil && returnErr == nil {
 			returnErr = err
 		}
@@ -69,14 +69,15 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 	for _, kind := range []market.RankingKind{market.KindStock, market.KindETF} {
 		quotes, err := s.marketProvider.FetchRankings(ctx, kind)
 		if err != nil {
-			primaryErr := err
 			if s.rankingFallback == nil {
-				result.Errors[string(kind)] = err.Error()
+				result.Errors[string(kind)] = "成交额榜单暂未更新"
+				result.Health[string(kind)] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "PRIMARY_TEMPORARY_FAILURE"}
 				continue
 			}
 			quotes, err = s.rankingFallback.FetchRankings(ctx, kind)
 			if err != nil {
-				result.Errors[string(kind)] = fmt.Sprintf("主来源失败：%s；备用来源失败：%s", primaryErr, err)
+				result.Errors[string(kind)] = "主、备用成交额榜单来源均暂不可用"
+				result.Health[string(kind)] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "FALLBACK_FAILURE"}
 				continue
 			}
 		}
@@ -90,6 +91,7 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 		} else {
 			result.ETF = row
 		}
+		result.Health[string(kind)] = refreshedSnapshotHealth(row)
 		rankingsRefreshed++
 	}
 	if result.Stock.ID == "" {
@@ -98,6 +100,7 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 			result.Errors["stock_cache"] = err.Error()
 		} else {
 			result.Stock = latest
+			result.Health["stock"] = cachedSnapshotHealth(latest, result.Health["stock"])
 		}
 	}
 	if result.ETF.ID == "" {
@@ -106,27 +109,52 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 			result.Errors["etf_cache"] = err.Error()
 		} else {
 			result.ETF = latest
+			result.Health["etf"] = cachedSnapshotHealth(latest, result.Health["etf"])
 		}
 	}
 	keys, err := s.store.ActiveQuoteKeys(ctx)
 	if err != nil {
 		result.Errors["quotes"] = err.Error()
+		result.Health["quotes"] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "LOCAL_QUERY_FAILED"}
 	} else {
 		quotes, err := s.marketProvider.FetchQuotes(ctx, keys)
 		if err != nil {
 			result.Errors["quotes"] = "持仓参考报价暂未更新（东方财富公开接口临时不可用；已保留最近一次成功报价）"
+			result.Health["quotes"] = s.cachedQuoteHealth(ctx, "PRIMARY_TEMPORARY_FAILURE")
+		} else if len(keys) > 0 && len(quotes) == 0 {
+			result.Errors["quotes"] = "持仓参考报价暂未更新（公开接口没有返回有效报价；已保留最近一次成功报价）"
+			result.Health["quotes"] = s.cachedQuoteHealth(ctx, "SOURCE_EMPTY")
 		} else if err := s.store.UpdateQuotes(ctx, quotes); err != nil {
 			result.Errors["quotes"] = err.Error()
+			result.Health["quotes"] = s.cachedQuoteHealth(ctx, "LOCAL_SAVE_FAILED")
+		} else {
+			result.Health["quotes"] = refreshedQuoteHealth(attemptedAt, quotes)
 		}
 	}
 	batch := s.marketProvider.FetchMarketMetrics(ctx, 120)
 	for kind, message := range batch.Errors {
 		result.Errors[string(kind)] = message
 	}
+	metricsSaved := true
 	if len(batch.Points) > 0 {
 		if _, err := s.store.SaveMetricPoints(ctx, batch.Points, s.now()); err != nil {
 			result.Errors["market_metrics"] = err.Error()
+			metricsSaved = false
 		}
+	}
+	for _, kind := range []market.MetricKind{market.MetricAShareTurnover, market.MetricSouthboundNetBuy} {
+		point, found := latestMetricPoint(batch.Points, kind)
+		if found && metricsSaved {
+			result.Health[string(kind)] = refreshedMetricHealth(attemptedAt, point)
+			continue
+		}
+		detailCode := "SOURCE_EMPTY"
+		if !metricsSaved {
+			detailCode = "LOCAL_SAVE_FAILED"
+		} else if _, failed := batch.Errors[kind]; failed {
+			detailCode = "PRIMARY_TEMPORARY_FAILURE"
+		}
+		result.Health[string(kind)] = s.cachedMetricHealth(ctx, kind, detailCode)
 	}
 	overview, err := s.MarketOverview(ctx, "3m")
 	if err != nil {
@@ -141,6 +169,78 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 		return result, fmt.Errorf("股票、ETF 和市场概览均无可用数据")
 	}
 	return result, nil
+}
+
+func refreshedSnapshotHealth(snapshot store.MarketSnapshotRow) market.ComponentHealth {
+	lastSuccessfulAt := snapshot.FetchedAt.UTC()
+	health := market.ComponentHealth{State: market.HealthLive, Source: snapshot.Source, LastSuccessfulAt: &lastSuccessfulAt, Message: "已更新"}
+	if len(snapshot.Entries) > 0 && !snapshot.Entries[0].SourceTime.IsZero() {
+		sourceTime := snapshot.Entries[0].SourceTime.UTC()
+		health.SourceTime = &sourceTime
+	}
+	return health
+}
+
+func refreshedQuoteHealth(now time.Time, quotes []market.Quote) market.ComponentHealth {
+	if len(quotes) == 0 {
+		lastSuccessfulAt := now.UTC()
+		return market.ComponentHealth{State: market.HealthLive, LastSuccessfulAt: &lastSuccessfulAt, Message: "已更新"}
+	}
+	health := market.AssessFreshness(now, quotes[0].TradeDate, quotes[0].SourceTime, 20*time.Minute)
+	health.Source = quotes[0].Source
+	lastSuccessfulAt := now.UTC()
+	health.LastSuccessfulAt = &lastSuccessfulAt
+	if health.State == market.HealthLive {
+		health.Message = "已更新"
+	}
+	return health
+}
+
+func (s *Service) cachedQuoteHealth(ctx context.Context, detailCode string) market.ComponentHealth {
+	quotes, err := s.store.LatestQuotes(ctx)
+	if err != nil || len(quotes) == 0 {
+		return market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: detailCode}
+	}
+	var latest store.LatestQuoteRow
+	for _, quote := range quotes {
+		if latest.InstrumentID == "" || quote.PriceAt.After(latest.PriceAt) {
+			latest = quote
+		}
+	}
+	sourceTime := latest.PriceAt.UTC()
+	return market.ComponentHealth{State: market.HealthCached, Source: latest.Source, SourceTime: &sourceTime, LastSuccessfulAt: &sourceTime, Message: "本地缓存", DetailCode: detailCode}
+}
+
+func latestMetricPoint(points []market.MetricPoint, kind market.MetricKind) (market.MetricPoint, bool) {
+	var latest market.MetricPoint
+	found := false
+	for _, point := range points {
+		if point.Metric != kind {
+			continue
+		}
+		if !found || point.TradeDate > latest.TradeDate || point.SourceTime.After(latest.SourceTime) {
+			latest = point
+			found = true
+		}
+	}
+	return latest, found
+}
+
+func refreshedMetricHealth(fetchedAt time.Time, point market.MetricPoint) market.ComponentHealth {
+	sourceTime := point.SourceTime.UTC()
+	lastSuccessfulAt := fetchedAt.UTC()
+	return market.ComponentHealth{State: market.HealthLive, Source: point.Source, SourceTime: &sourceTime, LastSuccessfulAt: &lastSuccessfulAt, Message: "已更新"}
+}
+
+func (s *Service) cachedMetricHealth(ctx context.Context, kind market.MetricKind, detailCode string) market.ComponentHealth {
+	points, fetchedAt, err := s.store.LatestMetricPoints(ctx, kind, "0000-01-01")
+	if err != nil || len(points) == 0 {
+		return market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: detailCode}
+	}
+	point := points[len(points)-1]
+	sourceTime := point.SourceTime.UTC()
+	lastSuccessfulAt := fetchedAt.UTC()
+	return market.ComponentHealth{State: market.HealthCached, Source: point.Source, SourceTime: &sourceTime, LastSuccessfulAt: &lastSuccessfulAt, Message: "本地缓存", DetailCode: detailCode}
 }
 
 func (s *Service) LatestMarket(ctx context.Context) (MarketResult, error) {
@@ -160,7 +260,7 @@ func (s *Service) LatestMarket(ctx context.Context) (MarketResult, error) {
 	if err != nil {
 		return MarketResult{}, err
 	}
-	return MarketResult{Stock: stock, ETF: etf, Overview: overview, Status: status}, nil
+	return MarketResult{Stock: stock, ETF: etf, Overview: overview, Health: status.Components, Status: status}, nil
 }
 
 func (s *Service) MarketRefreshStatuses(ctx context.Context) (map[string]store.MarketRefreshStatusRow, error) {
@@ -193,7 +293,8 @@ func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResul
 	result.Errors = make(map[string]string)
 	result.Health = make(map[string]market.ComponentHealth)
 	defer func() {
-		status, err := s.store.SaveMarketRefreshStatus(ctx, market.SnapshotModeLive, attemptedAt, result.Stock.ID != "" && result.ETF.ID != "", result.Errors)
+		succeeded := result.Health["live_stock"].State == market.HealthLive && result.Health["live_etf"].State == market.HealthLive
+		status, err := s.store.SaveMarketRefreshStatusWithHealth(ctx, market.SnapshotModeLive, attemptedAt, succeeded, result.Errors, result.Health)
 		if err != nil && returnErr == nil {
 			returnErr = err
 		}
@@ -232,6 +333,10 @@ func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResul
 		} else {
 			result.ETF = row
 		}
+		lastSuccessfulAt := attemptedAt.UTC()
+		health.LastSuccessfulAt = &lastSuccessfulAt
+		health.Message = "实时"
+		result.Health[healthKey] = health
 	}
 	if result.Stock.ID == "" {
 		result.Stock, _ = s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindStock)

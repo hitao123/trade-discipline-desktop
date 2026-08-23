@@ -40,6 +40,25 @@ func TestRefreshMarketUsesFallbackAndPersistsSuccessStatus(t *testing.T) {
 	}
 }
 
+func TestLatestMarketReturnsPersistedComponentHealth(t *testing.T) {
+	svc := openExecutionService(t)
+	svc.SetMarketProvider(fakeMarketProvider{
+		stock: []market.Quote{{TradeDate: "2026-08-12", Market: "SZ", Code: "300308", Name: "中际旭创", AssetType: market.KindStock, CloseMinor: 94_300, TurnoverFen: 2_600_000_000, Source: "fixture"}},
+		etf:   []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "510300", Name: "沪深300ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 800_000_000, Source: "fixture"}},
+	})
+	if _, err := svc.RefreshMarket(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := svc.LatestMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Health["stock"].State != market.HealthLive || latest.Health["etf"].State != market.HealthLive {
+		t.Fatalf("latest health=%#v status=%#v", latest.Health, latest.Status.Components)
+	}
+}
+
 func TestRefreshLiveMarketDoesNotFetchOutsideTradingSession(t *testing.T) {
 	svc := openExecutionService(t)
 	called := false
@@ -139,6 +158,53 @@ func TestRefreshLiveMarketTreatsEmptySourceRowsAsUnavailable(t *testing.T) {
 	}
 }
 
+func TestRefreshLiveMarketPersistsHealthWithoutAdvancingSuccessOnCachedFallback(t *testing.T) {
+	svc := openExecutionService(t)
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, shanghai)
+	svc.now = func() time.Time { return now }
+	tradeDate := "2026-08-12"
+	sourceTime := now.Add(-time.Minute)
+	svc.SetMarketRankingFallback(rankingProviderFunc(func(_ context.Context, kind market.RankingKind) ([]market.Quote, error) {
+		code := "600001"
+		name := "测试股票"
+		if kind == market.KindETF {
+			code = "510300"
+			name = "测试ETF"
+		}
+		return []market.Quote{{TradeDate: tradeDate, Market: "SH", Code: code, Name: name, AssetType: kind, CloseMinor: 1_000, TurnoverFen: 9_000_000, Source: "fixture-live", SourceTime: sourceTime}}, nil
+	}))
+
+	first, err := svc.RefreshLiveMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.IsLive || first.Status.LastSuccessfulAt == nil || first.Status.Components["live_stock"].State != market.HealthLive {
+		t.Fatalf("fresh live status=%#v", first)
+	}
+	firstSuccess := *first.Status.LastSuccessfulAt
+
+	now = now.Add(10 * time.Minute)
+	tradeDate = "2026-08-11"
+	sourceTime = time.Date(2026, 8, 11, 15, 0, 0, 0, shanghai)
+	second, err := svc.RefreshLiveMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IsLive || second.Health["live_stock"].State != market.HealthCached || second.Health["live_etf"].State != market.HealthCached {
+		t.Fatalf("cached live result=%#v", second)
+	}
+	if second.Status.LastSuccessfulAt == nil || !second.Status.LastSuccessfulAt.Equal(firstSuccess) {
+		t.Fatalf("cached fallback advanced last success: first=%s second=%#v", firstSuccess, second.Status.LastSuccessfulAt)
+	}
+	if second.Status.Components["live_stock"].State != market.HealthCached {
+		t.Fatalf("cached component health not persisted: %#v", second.Status.Components)
+	}
+}
+
 type rankingProviderFunc func(context.Context, market.RankingKind) ([]market.Quote, error)
 
 func (f rankingProviderFunc) FetchRankings(ctx context.Context, kind market.RankingKind) ([]market.Quote, error) {
@@ -217,6 +283,33 @@ func TestRefreshMarketStillRefreshesOverviewWhenQuoteUpdateFails(t *testing.T) {
 	}
 }
 
+func TestRefreshMarketKeepsRankingHealthyWhenQuotesUseCache(t *testing.T) {
+	svc := openExecutionService(t)
+	now := svc.now()
+	if err := svc.store.UpdateQuotes(context.Background(), []market.Quote{{Market: "HK", Code: "9988.HK", CloseMinor: 12_000, Source: "cached-quote", SourceTime: now.Add(-time.Hour)}}); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetMarketProvider(fakeMarketProvider{
+		stock:     []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "600001", Name: "示例股票", AssetType: market.KindStock, CloseMinor: 1_000, TurnoverFen: 9_000_000, Source: "fixture", SourceTime: now}},
+		etf:       []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "510300", Name: "沪深300ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 8_000_000, Source: "fixture", SourceTime: now}},
+		quotesErr: errors.New("upstream EOF"),
+	})
+
+	result, err := svc.RefreshMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Health["stock"].State != market.HealthLive || result.Health["etf"].State != market.HealthLive {
+		t.Fatalf("ranking health=%#v", result.Health)
+	}
+	if result.Health["quotes"].State != market.HealthCached || result.Health["quotes"].DetailCode != "PRIMARY_TEMPORARY_FAILURE" {
+		t.Fatalf("quote health=%#v", result.Health["quotes"])
+	}
+	if result.Status.Components["quotes"].State != market.HealthCached {
+		t.Fatalf("persisted status=%#v", result.Status)
+	}
+}
+
 func TestRefreshMarketStillRefreshesOverviewWhenBothRankingsFail(t *testing.T) {
 	svc := openExecutionService(t)
 	svc.SetMarketProvider(fakeMarketProvider{
@@ -270,6 +363,39 @@ func TestRefreshMarketKeepsCachedOverviewOnPartialFailure(t *testing.T) {
 	}
 	if len(second.Overview.AShareTurnover) != 1 || !second.Overview.Cached || second.Overview.Errors[string(market.MetricAShareTurnover)] == "" {
 		t.Fatalf("cached overview missing: %#v", second.Overview)
+	}
+}
+
+func TestRefreshMarketTracksMetricSuccessAndCacheIndependently(t *testing.T) {
+	svc := openExecutionService(t)
+	now := svc.now()
+	rankings := fakeMarketProvider{
+		stock: []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "600001", Name: "示例股票", AssetType: market.KindStock, CloseMinor: 1_000, TurnoverFen: 9_000_000, Source: "fixture", SourceTime: now}},
+		etf:   []market.Quote{{TradeDate: "2026-08-12", Market: "SH", Code: "510300", Name: "沪深300ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 8_000_000, Source: "fixture", SourceTime: now}},
+	}
+	rankings.metrics = market.MetricBatch{Points: []market.MetricPoint{
+		{TradeDate: "2026-08-11", Metric: market.MetricAShareTurnover, ValueFen: 150_000_000_000_000, Source: "fixture", SourceTime: now.AddDate(0, 0, -1)},
+		{TradeDate: "2026-08-11", Metric: market.MetricSouthboundNetBuy, ValueFen: -7_000_000_000, Source: "fixture", SourceTime: now.AddDate(0, 0, -1)},
+	}}
+	svc.SetMarketProvider(rankings)
+	if _, err := svc.RefreshMarket(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	rankings.metrics = market.MetricBatch{
+		Points: []market.MetricPoint{{TradeDate: "2026-08-12", Metric: market.MetricAShareTurnover, ValueFen: 160_000_000_000_000, Source: "fixture-current", SourceTime: now}},
+		Errors: map[market.MetricKind]string{market.MetricSouthboundNetBuy: "upstream EOF"},
+	}
+	svc.SetMarketProvider(rankings)
+	result, err := svc.RefreshMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Health[string(market.MetricAShareTurnover)].State != market.HealthLive {
+		t.Fatalf("turnover health=%#v", result.Health[string(market.MetricAShareTurnover)])
+	}
+	if result.Health[string(market.MetricSouthboundNetBuy)].State != market.HealthCached || result.Health[string(market.MetricSouthboundNetBuy)].DetailCode != "PRIMARY_TEMPORARY_FAILURE" {
+		t.Fatalf("southbound health=%#v", result.Health[string(market.MetricSouthboundNetBuy)])
 	}
 }
 
