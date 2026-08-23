@@ -17,11 +17,11 @@ type WeeklyReviewDraft struct {
 }
 
 func (s *Service) SaveWeeklyReview(ctx context.Context, draft WeeklyReviewDraft) (store.WeeklyReviewRow, error) {
-	start, err := time.Parse("2006-01-02", draft.PeriodStart)
+	start, err := parseShanghaiDate(draft.PeriodStart)
 	if err != nil {
 		return store.WeeklyReviewRow{}, fmt.Errorf("复盘开始日期无效")
 	}
-	end, err := time.Parse("2006-01-02", draft.PeriodEnd)
+	end, err := parseShanghaiDate(draft.PeriodEnd)
 	if err != nil || end.Before(start) {
 		return store.WeeklyReviewRow{}, fmt.Errorf("复盘结束日期无效")
 	}

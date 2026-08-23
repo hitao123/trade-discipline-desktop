@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecordQuickExecutionImmediatelyUpdatesPortfolioAndCreatesPendingReview(t *testing.T) {
@@ -70,5 +71,17 @@ func TestQuickLocalAmountRejectsOverflow(t *testing.T) {
 	var count int
 	if queryErr := svc.store.DB().QueryRow(`SELECT count(*) FROM execution_events`).Scan(&count); queryErr != nil || count != 0 {
 		t.Fatalf("count=%d err=%v", count, queryErr)
+	}
+}
+
+func TestPostTradeReviewPeriodUsesShanghaiCalendarBoundaries(t *testing.T) {
+	start, end, err := postTradeReviewPeriod("2026-08-10", "2026-08-16", time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantStart := time.Date(2026, 8, 9, 16, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 8, 16, 15, 59, 59, int(time.Second-time.Nanosecond), time.UTC)
+	if !start.Equal(wantStart) || !end.Equal(wantEnd) {
+		t.Fatalf("period start=%s end=%s, want start=%s end=%s", start, end, wantStart, wantEnd)
 	}
 }

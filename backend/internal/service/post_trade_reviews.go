@@ -81,13 +81,21 @@ func postTradeReviewPeriod(periodStart, periodEnd string, now time.Time) (time.T
 	if periodStart == "" && periodEnd == "" {
 		return time.Unix(0, 0).UTC(), now.UTC().AddDate(10, 0, 0), nil
 	}
-	start, err := time.Parse("2006-01-02", periodStart)
+	start, err := parseShanghaiDate(periodStart)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("待复盘开始日期无效")
 	}
-	end, err := time.Parse("2006-01-02", periodEnd)
+	end, err := parseShanghaiDate(periodEnd)
 	if err != nil || end.Before(start) {
 		return time.Time{}, time.Time{}, fmt.Errorf("待复盘结束日期无效")
 	}
 	return start, end.AddDate(0, 0, 1).Add(-time.Nanosecond), nil
+}
+
+func parseShanghaiDate(value string) (time.Time, error) {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.ParseInLocation("2006-01-02", value, location)
 }
