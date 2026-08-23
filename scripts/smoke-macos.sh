@@ -36,11 +36,13 @@ history_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master W
 discipline_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('pre_trade_confirmations','price_alert_events','position_review_events');")"
 allocation_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('allocation_profiles','allocation_versions','allocation_value_events');")"
 refresh_status_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='market_refresh_status';")"
+health_column_count="$(sqlite3 "$database" "SELECT count(*) FROM pragma_table_info('market_refresh_status') WHERE name='health_json';")"
+post_trade_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('post_trade_reviews','execution_fx_observations');")"
 kill -TERM "$app_pid" 2>/dev/null || true
 wait "$app_pid" 2>/dev/null || true
 
-if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" || "$schema_version" != "5" || "$history_table_count" != "2" || "$discipline_table_count" != "3" || "$allocation_table_count" != "3" || "$refresh_status_table_count" != "1" ]]; then
-	print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count schema=$schema_version history_tables=$history_table_count discipline_tables=$discipline_table_count allocation_tables=$allocation_table_count refresh_status_tables=$refresh_status_table_count"
+if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" || "$schema_version" != "7" || "$history_table_count" != "2" || "$discipline_table_count" != "3" || "$allocation_table_count" != "3" || "$refresh_status_table_count" != "1" || "$health_column_count" != "1" || "$post_trade_table_count" != "2" ]]; then
+	print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count schema=$schema_version history_tables=$history_table_count discipline_tables=$discipline_table_count allocation_tables=$allocation_table_count refresh_status_tables=$refresh_status_table_count health_columns=$health_column_count post_trade_tables=$post_trade_table_count"
   exit 1
 fi
 
