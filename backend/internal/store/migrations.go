@@ -149,6 +149,26 @@ var migrationStatements = []string{
 		executed_at TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS post_trade_reviews (
+		id TEXT PRIMARY KEY,
+		execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		status TEXT NOT NULL CHECK(status IN ('pending','completed')),
+		note TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		completed_at TEXT
+	)`,
+	`CREATE INDEX IF NOT EXISTS post_trade_review_status ON post_trade_reviews(status, created_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS execution_fx_observations (
+		id TEXT PRIMARY KEY,
+		execution_id TEXT NOT NULL REFERENCES execution_events(id),
+		base_currency TEXT NOT NULL,
+		quote_currency TEXT NOT NULL,
+		rate_minor INTEGER NOT NULL CHECK(rate_minor > 0),
+		source TEXT NOT NULL,
+		source_time TEXT NOT NULL,
+		observed_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS execution_fx_time ON execution_fx_observations(execution_id, observed_at DESC)`,
 	`CREATE TABLE IF NOT EXISTS cash_events (
 		id TEXT PRIMARY KEY,
 		event_type TEXT NOT NULL,

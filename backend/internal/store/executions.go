@@ -32,6 +32,7 @@ type AppendExecutionInput struct {
 	ReferencePriceMinor int64
 	ReferencePriceAt    time.Time
 	EmotionJSON         string
+	QuickRecord         bool
 }
 
 type AppendExecutionResult struct {
@@ -115,6 +116,11 @@ func (s *Store) AppendExecution(ctx context.Context, input AppendExecutionInput)
 	afterJSON, _ := json.Marshal(map[string]any{"classification": input.Classification, "settlementFen": input.Event.SettlementFen, "quantity": input.Event.Quantity})
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'execution', ?, 'recorded', NULL, ?, ?)`, NewID("audit"), eventID, string(afterJSON), createdAt); err != nil {
 		return AppendExecutionResult{}, fmt.Errorf("audit execution: %w", err)
+	}
+	if input.QuickRecord {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO post_trade_reviews(id, execution_id, status, note, created_at) VALUES(?, ?, 'pending', '', ?)`, NewID("post-review"), eventID, createdAt); err != nil {
+			return AppendExecutionResult{}, fmt.Errorf("create pending post-trade review: %w", err)
+		}
 	}
 	if input.ViolationCode != "" {
 		facts, err := json.Marshal(input.ViolationFacts)
