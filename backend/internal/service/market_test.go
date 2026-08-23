@@ -56,6 +56,89 @@ func TestRefreshLiveMarketDoesNotFetchOutsideTradingSession(t *testing.T) {
 	}
 }
 
+func TestRefreshLiveMarketDoesNotSavePreviousTradeDateAsLive(t *testing.T) {
+	svc := openExecutionService(t)
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, shanghai)
+	svc.now = func() time.Time { return now }
+	staleTime := time.Date(2026, 8, 11, 15, 0, 0, 0, shanghai)
+	svc.SetMarketRankingFallback(fakeMarketProvider{
+		stock: []market.Quote{{TradeDate: "2026-08-11", Market: "SH", Code: "600001", Name: "旧股票", AssetType: market.KindStock, CloseMinor: 1_000, TurnoverFen: 9_000_000, Source: "fixture", SourceTime: staleTime}},
+		etf:   []market.Quote{{TradeDate: "2026-08-11", Market: "SH", Code: "510300", Name: "旧ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 8_000_000, Source: "fixture", SourceTime: staleTime}},
+	})
+
+	result, err := svc.RefreshLiveMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsLive || result.State != "unavailable" {
+		t.Fatalf("result marked live: %#v", result)
+	}
+	if result.Health["live_stock"].State != market.HealthUnavailable || result.Health["live_etf"].State != market.HealthUnavailable {
+		t.Fatalf("unexpected health: %#v", result.Health)
+	}
+	var snapshots int
+	if err := svc.store.DB().QueryRow(`SELECT count(*) FROM market_snapshots WHERE snapshot_mode='live'`).Scan(&snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 0 {
+		t.Fatalf("stale source created %d live snapshots", snapshots)
+	}
+}
+
+func TestLatestLiveMarketMarksPreviousTradeDateSnapshotAsCached(t *testing.T) {
+	svc := openExecutionService(t)
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSourceTime := time.Date(2026, 8, 11, 15, 0, 0, 0, shanghai)
+	for _, item := range []struct {
+		kind  market.RankingKind
+		quote market.Quote
+	}{
+		{kind: market.KindStock, quote: market.Quote{TradeDate: "2026-08-11", Market: "SH", Code: "600001", Name: "旧股票", AssetType: market.KindStock, CloseMinor: 1_000, TurnoverFen: 9_000_000, Source: "fixture", SourceTime: oldSourceTime}},
+		{kind: market.KindETF, quote: market.Quote{TradeDate: "2026-08-11", Market: "SH", Code: "510300", Name: "旧ETF", AssetType: market.KindETF, CloseMinor: 420, TurnoverFen: 8_000_000, Source: "fixture", SourceTime: oldSourceTime}},
+	} {
+		if _, err := svc.store.SaveMarketSnapshotForMode(context.Background(), market.SnapshotModeLive, item.kind, []market.Quote{item.quote}, "fixture", oldSourceTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc.now = func() time.Time { return time.Date(2026, 8, 12, 10, 0, 0, 0, shanghai) }
+
+	result, err := svc.LatestLiveMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsLive || result.State != "degraded" {
+		t.Fatalf("cached snapshots marked live: %#v", result)
+	}
+	if result.Health["live_stock"].State != market.HealthCached || result.Health["live_etf"].State != market.HealthCached {
+		t.Fatalf("unexpected health: %#v", result.Health)
+	}
+}
+
+func TestRefreshLiveMarketTreatsEmptySourceRowsAsUnavailable(t *testing.T) {
+	svc := openExecutionService(t)
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.now = func() time.Time { return time.Date(2026, 8, 12, 10, 0, 0, 0, shanghai) }
+	svc.SetMarketRankingFallback(fakeMarketProvider{})
+
+	result, err := svc.RefreshLiveMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsLive || result.State != "unavailable" {
+		t.Fatalf("empty source result=%#v", result)
+	}
+}
+
 type rankingProviderFunc func(context.Context, market.RankingKind) ([]market.Quote, error)
 
 func (f rankingProviderFunc) FetchRankings(ctx context.Context, kind market.RankingKind) ([]market.Quote, error) {

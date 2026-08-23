@@ -14,11 +14,12 @@ import (
 )
 
 type MarketResult struct {
-	Stock    store.MarketSnapshotRow      `json:"stock"`
-	ETF      store.MarketSnapshotRow      `json:"etf"`
-	Overview MarketOverviewResult         `json:"overview"`
-	Errors   map[string]string            `json:"errors,omitempty"`
-	Status   store.MarketRefreshStatusRow `json:"status"`
+	Stock    store.MarketSnapshotRow           `json:"stock"`
+	ETF      store.MarketSnapshotRow           `json:"etf"`
+	Overview MarketOverviewResult              `json:"overview"`
+	Errors   map[string]string                 `json:"errors,omitempty"`
+	Health   map[string]market.ComponentHealth `json:"health,omitempty"`
+	Status   store.MarketRefreshStatusRow      `json:"status"`
 }
 
 type LiveMarketResult struct {
@@ -179,8 +180,7 @@ func (s *Service) MarketRefreshStatuses(ctx context.Context) (map[string]store.M
 
 func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResult, returnErr error) {
 	attemptedAt := s.now()
-	result.IsLive = market.IsAShareTradingSession(attemptedAt)
-	if !result.IsLive {
+	if !market.IsAShareTradingSession(attemptedAt) {
 		result.State = "market_closed"
 		cached, err := s.LatestLiveMarket(ctx)
 		result.MarketResult = cached.MarketResult
@@ -191,6 +191,7 @@ func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResul
 	}
 	result.State = "live"
 	result.Errors = make(map[string]string)
+	result.Health = make(map[string]market.ComponentHealth)
 	defer func() {
 		status, err := s.store.SaveMarketRefreshStatus(ctx, market.SnapshotModeLive, attemptedAt, result.Stock.ID != "" && result.ETF.ID != "", result.Errors)
 		if err != nil && returnErr == nil {
@@ -202,9 +203,23 @@ func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResul
 		return result, fmt.Errorf("实时行情来源尚未配置")
 	}
 	for _, kind := range []market.RankingKind{market.KindStock, market.KindETF} {
+		healthKey := "live_" + string(kind)
 		quotes, err := s.rankingFallback.FetchRankings(ctx, kind)
 		if err != nil {
 			result.Errors[string(kind)] = err.Error()
+			result.Health[healthKey] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "SOURCE_FETCH_FAILED"}
+			continue
+		}
+		if len(quotes) == 0 {
+			result.Errors[string(kind)] = "公开行情没有返回有效数据"
+			result.Health[healthKey] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "SOURCE_EMPTY"}
+			continue
+		}
+		health := market.AssessFreshness(attemptedAt, quotes[0].TradeDate, quotes[0].SourceTime, 5*time.Minute)
+		health.Source = rankingSource(quotes)
+		result.Health[healthKey] = health
+		if health.State != market.HealthLive {
+			result.Errors[string(kind)] = "公开行情返回的数据时间已过期"
 			continue
 		}
 		row, err := s.store.SaveMarketSnapshotForMode(ctx, market.SnapshotModeLive, kind, quotes, rankingSource(quotes), attemptedAt)
@@ -220,14 +235,39 @@ func (s *Service) RefreshLiveMarket(ctx context.Context) (result LiveMarketResul
 	}
 	if result.Stock.ID == "" {
 		result.Stock, _ = s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindStock)
+		result.Health["live_stock"] = cachedSnapshotHealth(result.Stock, result.Health["live_stock"])
 	}
 	if result.ETF.ID == "" {
 		result.ETF, _ = s.store.LatestMarketSnapshotForMode(ctx, market.SnapshotModeLive, market.KindETF)
+		result.Health["live_etf"] = cachedSnapshotHealth(result.ETF, result.Health["live_etf"])
 	}
 	if result.Stock.ID == "" && result.ETF.ID == "" {
-		return result, fmt.Errorf("实时股票和 ETF 榜单均无可用数据")
+		result.IsLive = false
+		result.State = "unavailable"
+		return result, nil
+	}
+	result.IsLive = result.Health["live_stock"].State == market.HealthLive && result.Health["live_etf"].State == market.HealthLive
+	if !result.IsLive {
+		result.State = "degraded"
 	}
 	return result, nil
+}
+
+func cachedSnapshotHealth(snapshot store.MarketSnapshotRow, health market.ComponentHealth) market.ComponentHealth {
+	if snapshot.ID == "" {
+		health.State = market.HealthUnavailable
+		health.Message = "暂不可用"
+		if health.DetailCode == "" {
+			health.DetailCode = "NO_LOCAL_CACHE"
+		}
+		return health
+	}
+	lastSuccessfulAt := snapshot.FetchedAt.UTC()
+	health.State = market.HealthCached
+	health.Source = snapshot.Source
+	health.LastSuccessfulAt = &lastSuccessfulAt
+	health.Message = "本地缓存"
+	return health
 }
 
 func (s *Service) LatestLiveMarket(ctx context.Context) (LiveMarketResult, error) {
@@ -244,7 +284,37 @@ func (s *Service) LatestLiveMarket(ctx context.Context) (LiveMarketResult, error
 		return LiveMarketResult{}, err
 	}
 	now := s.now()
-	return LiveMarketResult{MarketResult: MarketResult{Stock: stock, ETF: etf, Status: status}, IsLive: market.IsAShareTradingSession(now), State: liveMarketState(now)}, nil
+	health := map[string]market.ComponentHealth{
+		"live_stock": snapshotHealth(now, stock),
+		"live_etf":   snapshotHealth(now, etf),
+	}
+	isLive := health["live_stock"].State == market.HealthLive && health["live_etf"].State == market.HealthLive
+	state := liveMarketState(now)
+	if market.IsAShareTradingSession(now) && !isLive {
+		if stock.ID == "" && etf.ID == "" {
+			state = "unavailable"
+		} else {
+			state = "degraded"
+		}
+	}
+	return LiveMarketResult{MarketResult: MarketResult{Stock: stock, ETF: etf, Health: health, Status: status}, IsLive: isLive, State: state}, nil
+}
+
+func snapshotHealth(now time.Time, snapshot store.MarketSnapshotRow) market.ComponentHealth {
+	if snapshot.ID == "" || len(snapshot.Entries) == 0 {
+		return market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "NO_LOCAL_CACHE"}
+	}
+	if !market.IsAShareTradingSession(now) {
+		return cachedSnapshotHealth(snapshot, market.ComponentHealth{})
+	}
+	health := market.AssessFreshness(now, snapshot.TradeDate, snapshot.Entries[0].SourceTime, 5*time.Minute)
+	health.Source = snapshot.Source
+	if health.State != market.HealthLive {
+		return cachedSnapshotHealth(snapshot, health)
+	}
+	lastSuccessfulAt := snapshot.FetchedAt.UTC()
+	health.LastSuccessfulAt = &lastSuccessfulAt
+	return health
 }
 
 func liveMarketState(now time.Time) string {
