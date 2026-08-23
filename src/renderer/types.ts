@@ -47,6 +47,21 @@ export interface Portfolio {
   disciplineScoreBP: number
 }
 
+export interface PostTradeReview {
+  id: string
+  executionId: string
+  status: 'pending' | 'completed'
+  note: string
+  createdAt: string
+  completedAt?: string
+  instrumentId: string
+  side: 'buy' | 'sell'
+  quantity: number
+  localPriceMinor: number
+  settlementFen: number
+  executedAt: string
+}
+
 export type MonitorInterval = 'off' | '10m' | '15m' | '30m'
 
 export interface MonitorSettings {
