@@ -116,3 +116,26 @@ func TestMarketRefreshStatusKeepsLastSuccessAfterFailure(t *testing.T) {
 		t.Fatalf("status=%#v err=%v", status, err)
 	}
 }
+
+func TestMarketRefreshStatusPersistsComponentHealth(t *testing.T) {
+	db := openTestStore(t)
+	ctx := context.Background()
+	attemptedAt := time.Date(2026, 8, 21, 8, 5, 0, 0, time.UTC)
+	stockSourceTime := time.Date(2026, 8, 21, 8, 4, 30, 0, time.UTC)
+	quoteSuccess := time.Date(2026, 8, 21, 7, 58, 0, 0, time.UTC)
+	components := map[string]market.ComponentHealth{
+		"stock":  {State: market.HealthLive, Source: "sina-public-ranking", SourceTime: &stockSourceTime, LastSuccessfulAt: &attemptedAt, Message: "实时"},
+		"quotes": {State: market.HealthCached, Source: "eastmoney-public-quote", LastSuccessfulAt: &quoteSuccess, Message: "本地缓存", DetailCode: "PRIMARY_TEMPORARY_FAILURE"},
+	}
+
+	status, err := db.SaveMarketRefreshStatusWithHealth(ctx, market.SnapshotModeClose, attemptedAt, true, map[string]string{"quotes": "source unavailable"}, components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Components["stock"].State != market.HealthLive || status.Components["stock"].SourceTime == nil || !status.Components["stock"].SourceTime.Equal(stockSourceTime) {
+		t.Fatalf("stock health=%#v", status.Components["stock"])
+	}
+	if status.Components["quotes"].State != market.HealthCached || status.Components["quotes"].DetailCode != "PRIMARY_TEMPORARY_FAILURE" {
+		t.Fatalf("quote health=%#v", status.Components["quotes"])
+	}
+}

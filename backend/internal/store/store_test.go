@@ -75,7 +75,7 @@ func TestMigrationAddsAppendOnlyMarketHistorySchema(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -89,7 +89,7 @@ func TestMigrationAddsDisciplineLoopTables(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -103,7 +103,7 @@ func TestMigrationAddsAssetAllocationTables(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -111,7 +111,7 @@ func TestMigrationAddsAssetAllocationTables(t *testing.T) {
 func TestMigrationAddsMarketModeAndRefreshStatus(t *testing.T) {
 	db := openTestStore(t)
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 	var table string
@@ -151,5 +151,45 @@ func TestMigrationUpgradesExistingMarketSnapshotsToCloseMode(t *testing.T) {
 	var mode string
 	if err := db.DB().QueryRow(`SELECT snapshot_mode FROM market_snapshots WHERE id='legacy-stock'`).Scan(&mode); err != nil || mode != "close" {
 		t.Fatalf("legacy mode=%q err=%v", mode, err)
+	}
+}
+
+func TestMigrationUpgradesExistingMarketRefreshStatusWithHealth(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "legacy-health.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.DB().Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES (5, '2026-08-22T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`CREATE TABLE market_refresh_status (
+		snapshot_mode TEXT PRIMARY KEY CHECK(snapshot_mode IN ('close','live')),
+		last_attempt_at TEXT NOT NULL,
+		last_success_at TEXT,
+		errors_json TEXT NOT NULL CHECK(json_valid(errors_json))
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO market_refresh_status(snapshot_mode, last_attempt_at, last_success_at, errors_json) VALUES ('close', '2026-08-22T08:00:00Z', '2026-08-22T08:00:00Z', '{"quotes":"source unavailable"}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var healthJSON, errorsJSON string
+	if err := db.DB().QueryRow(`SELECT health_json, errors_json FROM market_refresh_status WHERE snapshot_mode='close'`).Scan(&healthJSON, &errorsJSON); err != nil {
+		t.Fatal(err)
+	}
+	if healthJSON != "{}" || errorsJSON != `{"quotes":"source unavailable"}` {
+		t.Fatalf("health=%q errors=%q", healthJSON, errorsJSON)
+	}
+	var version int
+	if err := db.DB().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 6 {
+		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }

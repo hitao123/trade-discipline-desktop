@@ -54,7 +54,8 @@ var migrationStatements = []string{
 		snapshot_mode TEXT PRIMARY KEY CHECK(snapshot_mode IN ('close','live')),
 		last_attempt_at TEXT NOT NULL,
 		last_success_at TEXT,
-		errors_json TEXT NOT NULL CHECK(json_valid(errors_json))
+		errors_json TEXT NOT NULL CHECK(json_valid(errors_json)),
+		health_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(health_json))
 	)`,
 	`CREATE TABLE IF NOT EXISTS market_rank_entries (
 		id TEXT PRIMARY KEY,

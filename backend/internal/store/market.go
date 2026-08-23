@@ -22,10 +22,11 @@ type MarketSnapshotRow struct {
 }
 
 type MarketRefreshStatusRow struct {
-	Mode             market.SnapshotMode `json:"mode"`
-	LastAttemptAt    time.Time           `json:"lastAttemptAt"`
-	LastSuccessfulAt *time.Time          `json:"lastSuccessfulAt,omitempty"`
-	Errors           map[string]string   `json:"errors,omitempty"`
+	Mode             market.SnapshotMode               `json:"mode"`
+	LastAttemptAt    time.Time                         `json:"lastAttemptAt"`
+	LastSuccessfulAt *time.Time                        `json:"lastSuccessfulAt,omitempty"`
+	Errors           map[string]string                 `json:"errors,omitempty"`
+	Components       map[string]market.ComponentHealth `json:"components,omitempty"`
 }
 
 type ObservationStats struct {
@@ -370,37 +371,49 @@ func (s *Store) LatestMarketSnapshotForMode(ctx context.Context, mode market.Sna
 }
 
 func (s *Store) SaveMarketRefreshStatus(ctx context.Context, mode market.SnapshotMode, attemptedAt time.Time, succeeded bool, errors map[string]string) (MarketRefreshStatusRow, error) {
+	return s.SaveMarketRefreshStatusWithHealth(ctx, mode, attemptedAt, succeeded, errors, nil)
+}
+
+func (s *Store) SaveMarketRefreshStatusWithHealth(ctx context.Context, mode market.SnapshotMode, attemptedAt time.Time, succeeded bool, errors map[string]string, components map[string]market.ComponentHealth) (MarketRefreshStatusRow, error) {
 	if mode != market.SnapshotModeClose && mode != market.SnapshotModeLive {
 		return MarketRefreshStatusRow{}, fmt.Errorf("unsupported market refresh mode %q", mode)
 	}
 	if errors == nil {
 		errors = map[string]string{}
 	}
+	if components == nil {
+		components = map[string]market.ComponentHealth{}
+	}
 	rawErrors, err := json.Marshal(errors)
 	if err != nil {
 		return MarketRefreshStatusRow{}, fmt.Errorf("encode market refresh errors: %w", err)
+	}
+	rawHealth, err := json.Marshal(components)
+	if err != nil {
+		return MarketRefreshStatusRow{}, fmt.Errorf("encode market refresh health: %w", err)
 	}
 	attemptedAt = attemptedAt.UTC()
 	var successfulAt any
 	if succeeded {
 		successfulAt = attemptedAt.Format(time.RFC3339Nano)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO market_refresh_status(snapshot_mode, last_attempt_at, last_success_at, errors_json)
-		VALUES(?,?,?,?)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO market_refresh_status(snapshot_mode, last_attempt_at, last_success_at, errors_json, health_json)
+		VALUES(?,?,?,?,?)
 		ON CONFLICT(snapshot_mode) DO UPDATE SET
 			last_attempt_at=excluded.last_attempt_at,
 			last_success_at=CASE WHEN excluded.last_success_at IS NULL THEN market_refresh_status.last_success_at ELSE excluded.last_success_at END,
-			errors_json=excluded.errors_json`, mode, attemptedAt.Format(time.RFC3339Nano), successfulAt, string(rawErrors)); err != nil {
+			errors_json=excluded.errors_json,
+			health_json=excluded.health_json`, mode, attemptedAt.Format(time.RFC3339Nano), successfulAt, string(rawErrors), string(rawHealth)); err != nil {
 		return MarketRefreshStatusRow{}, fmt.Errorf("save market refresh status: %w", err)
 	}
 	return s.MarketRefreshStatus(ctx, mode)
 }
 
 func (s *Store) MarketRefreshStatus(ctx context.Context, mode market.SnapshotMode) (MarketRefreshStatusRow, error) {
-	row := MarketRefreshStatusRow{Mode: mode, Errors: map[string]string{}}
+	row := MarketRefreshStatusRow{Mode: mode, Errors: map[string]string{}, Components: map[string]market.ComponentHealth{}}
 	var attempted, successful sql.NullString
-	var rawErrors string
-	err := s.db.QueryRowContext(ctx, `SELECT last_attempt_at, last_success_at, errors_json FROM market_refresh_status WHERE snapshot_mode=?`, mode).Scan(&attempted, &successful, &rawErrors)
+	var rawErrors, rawHealth string
+	err := s.db.QueryRowContext(ctx, `SELECT last_attempt_at, last_success_at, errors_json, health_json FROM market_refresh_status WHERE snapshot_mode=?`, mode).Scan(&attempted, &successful, &rawErrors, &rawHealth)
 	if err == sql.ErrNoRows {
 		return row, nil
 	}
@@ -414,6 +427,9 @@ func (s *Store) MarketRefreshStatus(ctx context.Context, mode market.SnapshotMod
 	}
 	if err := json.Unmarshal([]byte(rawErrors), &row.Errors); err != nil {
 		return MarketRefreshStatusRow{}, fmt.Errorf("decode market refresh status: %w", err)
+	}
+	if err := json.Unmarshal([]byte(rawHealth), &row.Components); err != nil {
+		return MarketRefreshStatusRow{}, fmt.Errorf("decode market refresh health: %w", err)
 	}
 	return row, nil
 }
