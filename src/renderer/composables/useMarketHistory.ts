@@ -35,6 +35,7 @@ export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
   const activeMarket = computed<MarketResult | LiveMarketResult | undefined>(() => mode.value === 'close' ? market.value : liveMarket.value)
   const activeSnapshot = computed(() => tab.value === 'stock' ? activeMarket.value?.stock : activeMarket.value?.etf)
   const activeStatus = computed(() => activeMarket.value?.status)
+	const activeHealth = computed(() => activeMarket.value?.health ?? activeMarket.value?.status?.components)
   const selectedKey = computed(() => selected.value ? selected.value.market + '-' + selected.value.code : '')
 
   async function requestAs<T>(path: string, init?: RequestInit) {
@@ -204,6 +205,7 @@ export function useMarketHistory(options: UseMarketHistoryOptions = {}) {
     notice,
     activeSnapshot,
     activeStatus,
+	activeHealth,
     selectedKey,
     load,
     refreshAll,

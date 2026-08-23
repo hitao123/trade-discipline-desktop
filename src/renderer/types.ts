@@ -111,24 +111,37 @@ export interface MarketSnapshot {
   entries: MarketQuote[]
 }
 
+export type MarketHealthState = 'live' | 'delayed' | 'cached' | 'unavailable'
+
+export interface MarketComponentHealth {
+  state: MarketHealthState
+  source?: string
+  sourceTime?: string
+  lastSuccessfulAt?: string
+  message?: string
+  detailCode?: string
+}
+
 export interface MarketRefreshStatus {
 	mode: 'close' | 'live'
 	lastAttemptAt?: string
 	lastSuccessfulAt?: string
 	errors?: Record<string, string>
+	components?: Record<string, MarketComponentHealth>
 }
 
 export interface MarketResult {
   stock: MarketSnapshot
   etf: MarketSnapshot
-  overview: MarketOverviewResult
+	overview: MarketOverviewResult
 	errors?: Record<string, string>
+	health?: Record<string, MarketComponentHealth>
 	status?: MarketRefreshStatus
 }
 
 export interface LiveMarketResult extends MarketResult {
 	isLive: boolean
-	state: 'live' | 'market_closed'
+	state: 'live' | 'market_closed' | 'degraded' | 'unavailable'
 }
 
 export type MarketRange = '1m' | '3m'

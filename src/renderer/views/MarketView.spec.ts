@@ -18,6 +18,21 @@ describe('MarketView', () => {
       stock: { id: 'stock-1', tradeDate: '2026-08-11', kind: 'stock', source: 'fixture', fetchedAt: '2026-08-12T08:00:00Z', version: 1, entries: [{ code: '600001', name: '示例股票', market: 'SH', closeMinor: 1000, changeBP: 120, turnoverFen: 900000000, assetType: 'stock', tradeDate: '2026-08-11', source: 'fixture', sourceTime: '2026-08-11T07:00:00Z' }] },
       etf: { id: 'etf-1', tradeDate: '2026-08-11', kind: 'etf', source: 'fixture', fetchedAt: '2026-08-12T08:00:00Z', version: 1, entries: [{ code: '510300', name: '沪深300ETF', market: 'SH', closeMinor: 420, changeBP: 15, turnoverFen: 800000000, assetType: 'etf', tradeDate: '2026-08-11', source: 'fixture', sourceTime: '2026-08-11T07:00:00Z' }] },
       overview,
+	  errors: { quotes: 'fetch closing quotes: Get "https://push2.eastmoney.com/api/qt/ulist.np/get?...": EOF' },
+	  health: {
+	    stock: { state: 'live', source: 'fixture', sourceTime: '2026-08-12T07:00:00Z', lastSuccessfulAt: '2026-08-12T08:00:00Z', message: '已更新' },
+	    etf: { state: 'live', source: 'fixture', sourceTime: '2026-08-12T07:00:00Z', lastSuccessfulAt: '2026-08-12T08:00:00Z', message: '已更新' },
+	    quotes: { state: 'cached', source: 'fixture-cache', sourceTime: '2026-08-11T07:00:00Z', lastSuccessfulAt: '2026-08-11T08:00:00Z', message: '本地缓存', detailCode: 'PRIMARY_TEMPORARY_FAILURE' },
+	    ashare_turnover: { state: 'live', source: 'fixture', sourceTime: '2026-08-11T07:00:00Z', lastSuccessfulAt: '2026-08-12T08:00:00Z', message: '已更新' },
+	    southbound_net_buy: { state: 'cached', source: 'fixture-cache', sourceTime: '2026-08-11T08:00:00Z', lastSuccessfulAt: '2026-08-11T08:00:00Z', message: '本地缓存', detailCode: 'PRIMARY_TEMPORARY_FAILURE' },
+	  },
+	  status: {
+	    mode: 'close',
+	    lastAttemptAt: '2026-08-12T08:00:00Z',
+	    lastSuccessfulAt: '2026-08-12T08:00:00Z',
+	    components: {},
+	    errors: { quotes: 'fetch closing quotes: Get "https://push2.eastmoney.com/api/qt/ulist.np/get?...": EOF' },
+	  },
     }
     const liveMarket = {
       ...market,
@@ -65,4 +80,13 @@ describe('MarketView', () => {
     expect(await screen.findByText('当前不在 A 股交易时段，未请求实时行情；将保留最近一次本地快照。')).toBeTruthy()
     expect(request).toHaveBeenCalledWith('/api/market/live/refresh', { method: 'POST' })
   })
+
+  it('shows independent data health without exposing raw provider errors', async () => {
+	  render(MarketView)
+	  expect(await screen.findByText('持仓参考价')).toBeTruthy()
+	  expect(screen.getAllByText('已更新').length).toBeGreaterThan(0)
+	  expect(screen.getAllByText('本地缓存').length).toBeGreaterThan(0)
+	  expect(screen.getByText('南向资金')).toBeTruthy()
+	  expect(screen.queryByText(/push2\.eastmoney\.com|EOF/)).toBeNull()
+	})
 })

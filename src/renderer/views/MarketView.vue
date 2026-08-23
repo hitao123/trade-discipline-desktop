@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
+import MarketHealthStrip from '@/renderer/components/market/MarketHealthStrip.vue'
 import InstrumentHistoryPanel from '@/renderer/components/market/InstrumentHistoryPanel.vue'
 import MarketOverviewPanel from '@/renderer/components/market/MarketOverviewPanel.vue'
 import MarketTable from '@/renderer/components/market/MarketTable.vue'
@@ -23,6 +24,7 @@ const {
   notice,
   activeSnapshot,
   activeStatus,
+  activeHealth,
   selectedKey,
   load,
   refreshAll,
@@ -51,9 +53,8 @@ const pageCopy = computed(() => isLiveMode.value
 
 const statusMessage = computed(() => {
   const status = activeStatus.value
-  const errors = Object.values(status?.errors ?? {})
-  if (errors.length > 0) return '最近刷新异常：' + errors.join('；')
-  if (status?.lastSuccessfulAt) return '最近成功刷新 ' + new Date(status.lastSuccessfulAt).toLocaleString('zh-CN', { hour12: false })
+	if (status?.lastAttemptAt) return '最近检查 ' + new Date(status.lastAttemptAt).toLocaleString('zh-CN', { hour12: false })
+	if (status?.lastSuccessfulAt) return '最近成功刷新 ' + new Date(status.lastSuccessfulAt).toLocaleString('zh-CN', { hour12: false })
   return '尚未手动刷新'
 })
 
@@ -99,6 +100,8 @@ onMounted(load)
     </div>
 
     <p v-if="isLiveMode" class="live-note">实时成交额仅在 A 股连续竞价时段可更新。休市、午休和周末会显示最近一次本地快照。</p>
+
+	<MarketHealthStrip :health="activeHealth" :mode="mode" />
 
     <MarketOverviewPanel
       v-if="!isLiveMode"
