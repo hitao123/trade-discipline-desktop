@@ -15,6 +15,10 @@ export interface ExecutionScreenshotDraft {
   warnings: string[]
 }
 
+export interface ExecutionScreenshotPrefill extends ExecutionScreenshotDraft {
+  instrumentId?: string | undefined
+}
+
 function numberFrom(raw?: string) {
   if (!raw) return undefined
   const value = Number(raw.replaceAll(',', ''))

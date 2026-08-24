@@ -3,10 +3,12 @@ import { onMounted, shallowRef } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import ExecutionForm from '@/renderer/components/executions/ExecutionForm.vue'
+import ExecutionScreenshotImport from '@/renderer/components/executions/ExecutionScreenshotImport.vue'
 import QuickExecutionForm from '@/renderer/components/executions/QuickExecutionForm.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import { api } from '@/renderer/lib/api'
 import { formatCNY } from '@/renderer/lib/format'
+import type { ExecutionScreenshotPrefill } from '@/renderer/lib/execution-screenshot'
 import type { Instrument, PlanRecord, Position } from '@/renderer/types'
 
 interface Receipt { id: string; classification: string; violationCode?: string; position: Position; cashFen: number; pendingReview?: boolean; cooldown?: { expectedEndsAt: string } }
@@ -18,6 +20,7 @@ const busy = shallowRef(false)
 const error = shallowRef('')
 const reversalReason = shallowRef('')
 const entryMode = shallowRef<'quick' | 'full'>('quick')
+const screenshotPrefill = shallowRef<ExecutionScreenshotPrefill>()
 
 async function load() {
   try {
@@ -63,7 +66,10 @@ onMounted(load)
 	  <button type="button" :class="{ active: entryMode === 'full' }" @click="entryMode = 'full'">完整补录</button>
 	</div>
     <div class="execution-layout">
-	  <QuickExecutionForm v-if="entryMode === 'quick'" :instruments="instruments" :plans="plans" :busy="busy" @submit="recordQuick" />
+	  <div v-if="entryMode === 'quick'" class="quick-entry">
+        <ExecutionScreenshotImport :instruments="instruments" @prefill="screenshotPrefill = $event" />
+        <QuickExecutionForm :instruments="instruments" :plans="plans" :busy="busy" :prefill="screenshotPrefill" @submit="recordQuick" />
+      </div>
       <ExecutionForm v-else :instruments="instruments" :plans="plans" :busy="busy" @submit="record" />
       <aside v-if="receipt" class="receipt" :class="{ 'receipt--violation': receipt.classification === 'serious_violation' }">
         <p>记录完成</p>
@@ -79,6 +85,7 @@ onMounted(load)
 
 <style scoped>
 .execution-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
+.quick-entry { display: grid; gap: 16px; min-width: 0; }
 .entry-tabs { display: flex; gap: 18px; margin: 0 0 20px; border-bottom: 1px solid var(--line); }.entry-tabs button { padding: 9px 1px; color: var(--ink-faint); border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer; }.entry-tabs button.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
 .receipt { padding: 22px; border-top: 3px solid #617158; background: var(--paper-deep); }
 .receipt--violation { border-top-color: var(--accent); }

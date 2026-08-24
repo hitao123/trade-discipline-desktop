@@ -14,6 +14,21 @@ describe('ExecutionsView', () => {
       if (path === '/api/plans') return Promise.resolve([])
       throw new Error(`unexpected ${path}`)
     })
+    Object.defineProperty(window, 'discipline', {
+      configurable: true,
+      value: {
+        recognizeExecutionScreenshot: vi.fn().mockResolvedValue({
+          name: '成交截图.png',
+          lines: [
+            { text: '515880', confidence: 1 },
+            { text: '通信ETF国泰', confidence: 0.9 },
+            { text: '买入，委托数量8000股', confidence: 1 },
+            { text: '5,216.00元（成交价格：0.652元）', confidence: 0.9 },
+            { text: '2026-08-24 10:34:21', confidence: 1 },
+          ],
+        }),
+      },
+    })
   })
 
   it('allows honest recording after a serious violation warning', async () => {
@@ -57,5 +72,19 @@ describe('ExecutionsView', () => {
 	await fireEvent.click(screen.getByRole('button', { name: '立即如实入账' }))
 	expect(await screen.findByText('已加入待复盘')).toBeTruthy()
 	await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/quick', expect.objectContaining({ method: 'POST' })))
+  })
+
+  it('prefills from a local screenshot without recording before confirmation', async () => {
+    request.mockImplementation((path: string) => {
+      if (path === '/api/instruments') return Promise.resolve([{ id: 'sh-515880', market: 'SH', code: '515880', name: '通信ETF国泰', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
+      if (path === '/api/plans') return Promise.resolve([])
+      throw new Error(`unexpected ${path}`)
+    })
+
+    render(ExecutionsView)
+    await fireEvent.click(await screen.findByRole('button', { name: '从成交截图识别' }))
+    expect(await screen.findByText('已识别：515880 · 买入 · 8000 股 · 0.652 元')).toBeTruthy()
+    expect(screen.getByLabelText('成交均价')).toHaveValue(0.652)
+    expect(request).not.toHaveBeenCalledWith('/api/executions/quick', expect.anything())
   })
 })
