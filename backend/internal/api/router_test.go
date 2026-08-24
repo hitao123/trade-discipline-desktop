@@ -83,6 +83,35 @@ func authorizedRequest(t *testing.T, method, endpoint string, body []byte) *http
 	return req
 }
 
+func TestDashboardCooldownUsesFrontendJSONContract(t *testing.T) {
+	server := newAPIServer(t)
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/executions/quick", []byte(`{"instrumentId":"hk-9988","side":"buy","quantity":100,"localPriceMinor":12000,"settlementFen":-1205000}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("quick status=%d", response.StatusCode)
+	}
+
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/dashboard", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result struct {
+		Data struct {
+			Cooldown map[string]any `json:"cooldown"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Data.Cooldown["expectedEndsAt"]; got != "2026-08-19T08:00:00Z" {
+		t.Fatalf("expectedEndsAt=%v cooldown=%#v", got, result.Data.Cooldown)
+	}
+}
+
 func TestQuickExecutionAndPostTradeReviewAPI(t *testing.T) {
 	server := newAPIServer(t)
 	response, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/executions/quick", []byte(`{"instrumentId":"hk-9988","side":"buy","quantity":100,"localPriceMinor":12000,"settlementFen":-1205000}`)))

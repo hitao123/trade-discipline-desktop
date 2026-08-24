@@ -9,6 +9,8 @@ const cnyInstrument = { id: 'sh-510300', market: 'SH', code: '510300', name: '�
 describe('QuickExecutionForm', () => {
   it('calculates the local amount and emits an honest HK execution', async () => {
     const rendered = render(QuickExecutionForm, { props: { instruments: [hkInstrument], plans: [], busy: false } })
+    expect(screen.getByText('数量').closest('.field-heading')).toHaveTextContent('数量一手 100 股')
+    expect(screen.getByText('成交均价').closest('.field-heading')).toHaveTextContent('成交均价HKD')
     await fireEvent.update(screen.getByLabelText('成交均价'), '480')
 	  expect(screen.getByText('HK$48,000.00')).toBeTruthy()
     expect(screen.getByText('无计划也可以如实保存，系统会记入纪律记录。')).toBeTruthy()

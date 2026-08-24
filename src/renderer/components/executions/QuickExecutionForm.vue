@@ -109,14 +109,12 @@ function submit() {
         <select v-model="form.side" required><option value="buy">买入</option><option value="sell">卖出</option></select>
       </label>
       <label class="field">
-        <span>数量</span>
+        <span class="field-heading"><span>数量</span><small>一手 {{ selected?.lotSize ?? 100 }} 股</small></span>
         <input v-model.number="form.quantity" type="number" :min="selected?.lotSize ?? 1" :step="selected?.lotSize ?? 1" required />
-        <small>一手 {{ selected?.lotSize ?? 100 }} 股</small>
       </label>
       <label class="field">
-        <span>成交均价</span>
+        <span class="field-heading"><span>成交均价</span><small>{{ selected?.currency ?? '本币' }}</small></span>
         <input v-model.number="form.localPrice" aria-label="成交均价" type="number" :min="priceStep" :step="priceStep" required />
-        <small>{{ selected?.currency ?? '本币' }}</small>
       </label>
     </div>
 
@@ -165,6 +163,8 @@ function submit() {
 .boundary-note strong { color: var(--ink); }
 .quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .quick-grid--primary { grid-template-columns: 1.35fr .8fr .65fr .8fr; }
+.field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.field-heading small { flex: none; font-size: 10px; font-weight: 400; }
 .amount-row { display: grid; grid-template-columns: minmax(180px, .75fr) minmax(260px, 1.25fr); gap: 14px; align-items: stretch; }
 .amount-row > div { display: grid; align-content: center; gap: 7px; padding: 15px; border: 1px solid var(--line); background: var(--paper-deep); }
 .amount-row span { color: var(--ink-muted); font-size: 11px; }

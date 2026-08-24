@@ -13,11 +13,11 @@ import (
 )
 
 type CooldownInput struct {
-	Reason         string
-	Severity       string
-	StartsAt       time.Time
-	ExpectedEndsAt time.Time
-	AllowedActions []string
+	Reason         string    `json:"reason"`
+	Severity       string    `json:"severity"`
+	StartsAt       time.Time `json:"startsAt"`
+	ExpectedEndsAt time.Time `json:"expectedEndsAt"`
+	AllowedActions []string  `json:"allowedActions"`
 }
 
 type AppendExecutionInput struct {
