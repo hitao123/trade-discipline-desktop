@@ -103,6 +103,9 @@ func (p SinaProvider) FetchRankings(ctx context.Context, kind RankingKind) ([]Qu
 		if kind == KindStock && (strings.Contains(nameUpper, "ST") || strings.Contains(nameUpper, "退")) {
 			continue
 		}
+		if kind == KindETF && !visibleETF(name) {
+			continue
+		}
 		sourceTime := marketStamp
 		if row.TickTime != "" {
 			if parsedTime, parseErr := time.ParseInLocation("2006-01-02 15:04:05", tradeDate+" "+row.TickTime, location); parseErr == nil {

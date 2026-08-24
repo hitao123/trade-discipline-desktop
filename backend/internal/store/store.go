@@ -17,7 +17,7 @@ type Store struct {
 	path string
 }
 
-const CurrentSchemaVersion = 7
+const CurrentSchemaVersion = 8
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -63,6 +63,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	if err := ensureMarketRefreshHealth(ctx, tx); err != nil {
+		return err
+	}
+	if err := migrateReferenceQuoteScaleV8(ctx, tx); err != nil {
 		return err
 	}
 
@@ -115,6 +118,25 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
+	}
+	return nil
+}
+
+func migrateReferenceQuoteScaleV8(ctx context.Context, tx *sql.Tx) error {
+	var applied int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version=8`).Scan(&applied); err != nil {
+		return fmt.Errorf("inspect reference quote scale migration: %w", err)
+	}
+	if applied > 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE instruments
+		SET latest_price_minor=NULL, latest_price_at=NULL, latest_price_source=NULL
+		WHERE market IN ('SH','SZ') AND latest_price_source='eastmoney-public-close'`); err != nil {
+		return fmt.Errorf("clear legacy A-share reference prices: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return fmt.Errorf("record reference quote scale migration: %w", err)
 	}
 	return nil
 }

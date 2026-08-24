@@ -37,7 +37,7 @@ func TestSinaProviderFetchesRankingsWithExactTradingTimestamp(t *testing.T) {
 	}
 }
 
-func TestSinaProviderUsesETFNodeAndLimitsToTopTen(t *testing.T) {
+func TestSinaProviderUsesETFNodeAndReturnsVisibleETF(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index":
@@ -46,7 +46,7 @@ func TestSinaProviderUsesETFNodeAndLimitsToTopTen(t *testing.T) {
 			if r.URL.Query().Get("node") != "etf_hq_fund" {
 				t.Fatalf("expected ETF node, got %s", r.URL.Query().Get("node"))
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"sh511360","code":"511360","name":"短融ETF","trade":"113.835","changepercent":0.012,"amount":27635286184,"ticktime":"15:34:58"}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"sh515880","code":"515880","name":"通信ETF国泰","trade":"0.643","changepercent":1.2,"amount":27635286184,"ticktime":"15:34:58"}]`))
 		}
 	}))
 	defer server.Close()

@@ -118,7 +118,7 @@ func parseCSVRecord(record []string) (Quote, string) {
 func topQuotes(all []Quote, kind RankingKind, limit int) []Quote {
 	filtered := make([]Quote, 0)
 	for _, quote := range all {
-		if quote.AssetType == kind {
+		if quote.AssetType == kind && (kind != KindETF || visibleETF(quote.Name)) {
 			filtered = append(filtered, quote)
 		}
 	}

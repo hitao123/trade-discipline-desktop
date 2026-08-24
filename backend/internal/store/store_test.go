@@ -75,7 +75,7 @@ func TestMigrationAddsAppendOnlyMarketHistorySchema(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 7 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -89,7 +89,7 @@ func TestMigrationAddsDisciplineLoopTables(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 7 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -103,7 +103,7 @@ func TestMigrationAddsAssetAllocationTables(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 7 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -111,7 +111,7 @@ func TestMigrationAddsAssetAllocationTables(t *testing.T) {
 func TestMigrationAddsMarketModeAndRefreshStatus(t *testing.T) {
 	db := openTestStore(t)
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 7 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 	var table string
@@ -189,7 +189,7 @@ func TestMigrationUpgradesExistingMarketRefreshStatusWithHealth(t *testing.T) {
 		t.Fatalf("health=%q errors=%q", healthJSON, errorsJSON)
 	}
 	var version int
-	if err := db.DB().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+	if err := db.DB().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -203,7 +203,7 @@ func TestMigrationAddsPostTradeReviewAndFXObservationTables(t *testing.T) {
 		}
 	}
 	var version int
-	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 7 {
+	if err := db.DB().QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
