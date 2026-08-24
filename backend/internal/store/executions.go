@@ -101,11 +101,11 @@ func (s *Store) AppendExecution(ctx context.Context, input AppendExecutionInput)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO execution_events(
 		id, original_event_id, event_type, plan_id, instrument_id, rule_version_id, quantity,
-		local_price_minor, local_amount_minor, settlement_fen, exit_code, evidence,
+		local_price_minor, local_price_ten_thousandth, local_amount_minor, settlement_fen, exit_code, evidence,
 		broker_reference, reference_price_minor, reference_price_at, emotion_json, executed_at, created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		eventID, original, input.Event.EventType, plan, input.Event.InstrumentID, input.RuleVersionID, input.Event.Quantity,
-		input.Event.LocalPriceMinor, input.Event.LocalAmountMinor, input.Event.SettlementFen, nullable(input.Event.ExitCode), nullable(input.Evidence),
+		input.Event.LocalPriceMinor, input.Event.LocalPriceTenThousandth, input.Event.LocalAmountMinor, input.Event.SettlementFen, nullable(input.Event.ExitCode), nullable(input.Evidence),
 		nullable(input.BrokerReference), nullableInt(input.ReferencePriceMinor), referenceAt, input.EmotionJSON, executedAt, createdAt,
 	)
 	if err != nil {
@@ -113,7 +113,9 @@ func (s *Store) AppendExecution(ctx context.Context, input AppendExecutionInput)
 	}
 
 	result := AppendExecutionResult{ExecutionID: eventID}
-	afterJSON, _ := json.Marshal(map[string]any{"classification": input.Classification, "settlementFen": input.Event.SettlementFen, "quantity": input.Event.Quantity})
+	var emotion any
+	_ = json.Unmarshal([]byte(input.EmotionJSON), &emotion)
+	afterJSON, _ := json.Marshal(map[string]any{"classification": input.Classification, "settlementFen": input.Event.SettlementFen, "quantity": input.Event.Quantity, "emotion": emotion})
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'execution', ?, 'recorded', NULL, ?, ?)`, NewID("audit"), eventID, string(afterJSON), createdAt); err != nil {
 		return AppendExecutionResult{}, fmt.Errorf("audit execution: %w", err)
 	}
@@ -153,7 +155,7 @@ func (s *Store) AppendExecutionReversal(ctx context.Context, originalID, ruleVer
 	defer func() { _ = tx.Rollback() }()
 	var original domain.ExecutionEvent
 	var eventType string
-	if err := tx.QueryRowContext(ctx, `SELECT event_type, instrument_id, quantity, local_price_minor, local_amount_minor, settlement_fen FROM execution_events WHERE id=?`, originalID).Scan(&eventType, &original.InstrumentID, &original.Quantity, &original.LocalPriceMinor, &original.LocalAmountMinor, &original.SettlementFen); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT event_type, instrument_id, quantity, local_price_minor, local_price_ten_thousandth, local_amount_minor, settlement_fen FROM execution_events WHERE id=?`, originalID).Scan(&eventType, &original.InstrumentID, &original.Quantity, &original.LocalPriceMinor, &original.LocalPriceTenThousandth, &original.LocalAmountMinor, &original.SettlementFen); err != nil {
 		return AppendReversalResult{}, fmt.Errorf("load execution for reversal: %w", err)
 	}
 	if eventType == string(domain.ExecutionReversal) {
@@ -168,7 +170,7 @@ func (s *Store) AppendExecutionReversal(ctx context.Context, originalID, ruleVer
 	}
 	id := NewID("execution")
 	stamp := now.UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO execution_events(id, original_event_id, event_type, plan_id, instrument_id, rule_version_id, quantity, local_price_minor, local_amount_minor, settlement_fen, exit_code, evidence, broker_reference, reference_price_minor, reference_price_at, emotion_json, executed_at, created_at) VALUES(?,?,'reversal',NULL,?,?,?,?,?,?,NULL,?,NULL,NULL,NULL,'{}',?,?)`, id, originalID, original.InstrumentID, ruleVersionID, original.Quantity, original.LocalPriceMinor, original.LocalAmountMinor, original.SettlementFen, reason, stamp, stamp); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO execution_events(id, original_event_id, event_type, plan_id, instrument_id, rule_version_id, quantity, local_price_minor, local_price_ten_thousandth, local_amount_minor, settlement_fen, exit_code, evidence, broker_reference, reference_price_minor, reference_price_at, emotion_json, executed_at, created_at) VALUES(?,?,'reversal',NULL,?,?,?,?,?,?,?,NULL,?,NULL,NULL,NULL,'{}',?,?)`, id, originalID, original.InstrumentID, ruleVersionID, original.Quantity, original.LocalPriceMinor, original.LocalPriceTenThousandth, original.LocalAmountMinor, original.SettlementFen, reason, stamp, stamp); err != nil {
 		return AppendReversalResult{}, fmt.Errorf("insert reversal: %w", err)
 	}
 	afterJSON, _ := json.Marshal(map[string]any{"reversalId": id, "reason": reason})
@@ -196,7 +198,7 @@ func nullableInt(value int64) any {
 }
 
 func (s *Store) LoadExecutions(ctx context.Context) ([]domain.ExecutionEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id, COALESCE(e.original_event_id,''), e.event_type, COALESCE(e.plan_id,''), e.instrument_id, i.code, e.quantity, e.local_price_minor, e.local_amount_minor, e.settlement_fen, i.is_china_tech, COALESCE(e.exit_code,''), e.executed_at FROM execution_events e JOIN instruments i ON i.id=e.instrument_id ORDER BY e.executed_at, e.created_at, e.id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, COALESCE(e.original_event_id,''), e.event_type, COALESCE(e.plan_id,''), e.instrument_id, i.code, e.quantity, e.local_price_minor, e.local_price_ten_thousandth, e.local_amount_minor, e.settlement_fen, i.is_china_tech, COALESCE(e.exit_code,''), e.executed_at FROM execution_events e JOIN instruments i ON i.id=e.instrument_id ORDER BY e.executed_at, e.created_at, e.id`)
 	if err != nil {
 		return nil, fmt.Errorf("load executions: %w", err)
 	}
@@ -207,7 +209,7 @@ func (s *Store) LoadExecutions(ctx context.Context) ([]domain.ExecutionEvent, er
 		var eventType string
 		var tech int
 		var executed string
-		if err := rows.Scan(&event.ID, &event.OriginalEventID, &eventType, &event.PlanID, &event.InstrumentID, &event.Code, &event.Quantity, &event.LocalPriceMinor, &event.LocalAmountMinor, &event.SettlementFen, &tech, &event.ExitCode, &executed); err != nil {
+		if err := rows.Scan(&event.ID, &event.OriginalEventID, &eventType, &event.PlanID, &event.InstrumentID, &event.Code, &event.Quantity, &event.LocalPriceMinor, &event.LocalPriceTenThousandth, &event.LocalAmountMinor, &event.SettlementFen, &tech, &event.ExitCode, &executed); err != nil {
 			return nil, fmt.Errorf("scan execution: %w", err)
 		}
 		event.EventType = domain.ExecutionType(eventType)

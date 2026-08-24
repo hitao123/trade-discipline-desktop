@@ -58,7 +58,9 @@ export interface PostTradeReview {
   side: 'buy' | 'sell'
   quantity: number
   localPriceMinor: number
+  localPriceTenThousandth?: number
   settlementFen: number
+  emotion?: { fearScore: number; greedScore: number; revengeScore: number }
   executedAt: string
 }
 

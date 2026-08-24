@@ -22,6 +22,13 @@ function signedCNY(fen: number) {
   return formatCNY(fen).replace('-', '−')
 }
 
+function executionPrice(review: PostTradeReview) {
+  const value = review.localPriceTenThousandth
+    ? review.localPriceTenThousandth / 10_000
+    : review.localPriceMinor / 100
+  return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+}
+
 function complete(executionId: string) {
   const note = notes[executionId]?.trim() ?? ''
   if (note) emit('complete', executionId, note)
@@ -46,9 +53,10 @@ function complete(executionId: string) {
           <span>{{ review.side === 'buy' ? '买入' : '卖出' }} {{ review.quantity }} 股</span>
         </div>
         <dl>
-          <div><dt>成交均价</dt><dd>{{ (review.localPriceMinor / 100).toFixed(2) }}</dd></div>
+          <div><dt>成交均价</dt><dd>{{ executionPrice(review) }}</dd></div>
           <div><dt>实际结算</dt><dd>{{ signedCNY(review.settlementFen) }}</dd></div>
           <div><dt>成交时间</dt><dd>{{ new Date(review.executedAt).toLocaleString('zh-CN', { hour12: false }) }}</dd></div>
+          <div><dt>当时情绪</dt><dd>恐惧 {{ review.emotion?.fearScore ?? 0 }} · 贪婪 {{ review.emotion?.greedScore ?? 0 }} · 回本冲动 {{ review.emotion?.revengeScore ?? 0 }}</dd></div>
         </dl>
       </div>
       <label class="field">

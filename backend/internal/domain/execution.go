@@ -10,20 +10,27 @@ const (
 	ExecutionReversal ExecutionType = "reversal"
 )
 
+type ExecutionEmotion struct {
+	FearScore    int `json:"fearScore"`
+	GreedScore   int `json:"greedScore"`
+	RevengeScore int `json:"revengeScore"`
+}
+
 type ExecutionEvent struct {
-	ID               string
-	OriginalEventID  string
-	EventType        ExecutionType
-	PlanID           string
-	InstrumentID     string
-	Code             string
-	Quantity         int
-	LocalPriceMinor  int64
-	LocalAmountMinor int64
-	SettlementFen    int64
-	IsChinaTech      bool
-	ExitCode         string
-	ExecutedAt       time.Time
+	ID                      string
+	OriginalEventID         string
+	EventType               ExecutionType
+	PlanID                  string
+	InstrumentID            string
+	Code                    string
+	Quantity                int
+	LocalPriceMinor         int64
+	LocalPriceTenThousandth int64
+	LocalAmountMinor        int64
+	SettlementFen           int64
+	IsChinaTech             bool
+	ExitCode                string
+	ExecutedAt              time.Time
 }
 
 type CashEvent struct {

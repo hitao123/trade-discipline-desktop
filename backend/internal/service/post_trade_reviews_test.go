@@ -35,12 +35,29 @@ func TestRecordQuickExecutionRequiresActualHKSettlementAndPrefillsCNYSettlement(
 	if _, err := svc.store.DB().Exec(`INSERT INTO instruments(id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status) VALUES ('sh-510300','SH','510300','沪深300ETF','etf','CNY',100,'fixture',0,0,'active')`); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := svc.RecordQuickExecution(context.Background(), QuickExecutionDraft{InstrumentID: "sh-510300", Side: "buy", Quantity: 100, LocalPriceMinor: 420})
+	receipt, err := svc.RecordQuickExecution(context.Background(), QuickExecutionDraft{
+		InstrumentID: "sh-510300", Side: "buy", Quantity: 8000, LocalPriceTenThousandth: 6520,
+		Emotion: ExecutionEmotion{FearScore: 3, GreedScore: 1, RevengeScore: 0},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.CashFen != 19_958_000 || receipt.Position.Quantity != 100 {
+	if receipt.CashFen != 19_478_400 || receipt.Position.Quantity != 8000 {
 		t.Fatalf("CNY receipt=%#v", receipt)
+	}
+	var precisePrice int64
+	var emotionJSON, auditJSON string
+	if err := svc.store.DB().QueryRow(`SELECT local_price_ten_thousandth, emotion_json FROM execution_events WHERE id=?`, receipt.ID).Scan(&precisePrice, &emotionJSON); err != nil {
+		t.Fatal(err)
+	}
+	if precisePrice != 6520 || !strings.Contains(emotionJSON, `"fearScore":3`) || !strings.Contains(emotionJSON, `"greedScore":1`) {
+		t.Fatalf("price=%d emotion=%s", precisePrice, emotionJSON)
+	}
+	if err := svc.store.DB().QueryRow(`SELECT after_json FROM audit_events WHERE entity_type='execution' AND entity_id=? AND action='recorded'`, receipt.ID).Scan(&auditJSON); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(auditJSON, `"emotion"`) || !strings.Contains(auditJSON, `"fearScore":3`) {
+		t.Fatalf("audit=%s", auditJSON)
 	}
 }
 

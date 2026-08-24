@@ -138,6 +138,7 @@ var migrationStatements = []string{
 		rule_version_id TEXT NOT NULL REFERENCES rule_versions(id),
 		quantity INTEGER NOT NULL,
 		local_price_minor INTEGER NOT NULL,
+		local_price_ten_thousandth INTEGER NOT NULL,
 		local_amount_minor INTEGER NOT NULL,
 		settlement_fen INTEGER NOT NULL,
 		exit_code TEXT,

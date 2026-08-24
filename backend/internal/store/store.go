@@ -65,6 +65,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := ensureMarketRefreshHealth(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureExecutionPricePrecision(ctx, tx); err != nil {
+		return err
+	}
 	if err := migrateReferenceQuoteScaleV8(ctx, tx); err != nil {
 		return err
 	}
@@ -118,6 +121,40 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
+	}
+	return nil
+}
+
+func ensureExecutionPricePrecision(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(execution_events)`)
+	if err != nil {
+		return fmt.Errorf("inspect execution price schema: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan execution price schema: %w", err)
+		}
+		if name == "local_price_ten_thousandth" {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close execution price schema: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE execution_events ADD COLUMN local_price_ten_thousandth INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add precise execution price: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE execution_events SET local_price_ten_thousandth=local_price_minor*100`); err != nil {
+		return fmt.Errorf("backfill precise execution price: %w", err)
 	}
 	return nil
 }

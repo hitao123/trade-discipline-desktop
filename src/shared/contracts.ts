@@ -3,6 +3,12 @@ export type AssetType = 'stock' | 'etf'
 export type Currency = 'CNY' | 'HKD'
 export type MoneyFen = number
 
+export interface ExecutionEmotion {
+  fearScore: number
+  greedScore: number
+  revengeScore: number
+}
+
 export interface ApiFieldError {
   code: string
   message: string
@@ -39,9 +45,11 @@ export interface ExecutionDraft {
   executedAt: string
   quantity: number
   localPriceMinor: number
+  localPriceTenThousandth?: number
   localAmountMinor: number
   settlementFen: MoneyFen
   exitCode?: 'T' | 'B' | 'R' | 'C'
   evidence?: string
   brokerReference?: string
+  emotion?: ExecutionEmotion
 }

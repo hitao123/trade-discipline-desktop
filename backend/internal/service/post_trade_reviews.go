@@ -7,30 +7,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/local/trade-discipline-desktop/backend/internal/domain"
 	"github.com/local/trade-discipline-desktop/backend/internal/store"
 )
 
+type ExecutionEmotion = domain.ExecutionEmotion
+
 type QuickExecutionDraft struct {
-	InstrumentID    string    `json:"instrumentId"`
-	Side            string    `json:"side"`
-	Quantity        int       `json:"quantity"`
-	LocalPriceMinor int64     `json:"localPriceMinor"`
-	SettlementFen   int64     `json:"settlementFen"`
-	PlanID          string    `json:"planId,omitempty"`
-	ExecutedAt      time.Time `json:"executedAt,omitempty"`
-	BrokerReference string    `json:"brokerReference,omitempty"`
-	ExitCode        string    `json:"exitCode,omitempty"`
-	Evidence        string    `json:"evidence,omitempty"`
+	InstrumentID            string           `json:"instrumentId"`
+	Side                    string           `json:"side"`
+	Quantity                int              `json:"quantity"`
+	LocalPriceMinor         int64            `json:"localPriceMinor"`
+	LocalPriceTenThousandth int64            `json:"localPriceTenThousandth,omitempty"`
+	SettlementFen           int64            `json:"settlementFen"`
+	Emotion                 ExecutionEmotion `json:"emotion"`
+	PlanID                  string           `json:"planId,omitempty"`
+	ExecutedAt              time.Time        `json:"executedAt,omitempty"`
+	BrokerReference         string           `json:"brokerReference,omitempty"`
+	ExitCode                string           `json:"exitCode,omitempty"`
+	Evidence                string           `json:"evidence,omitempty"`
 }
 
 func (s *Service) RecordQuickExecution(ctx context.Context, draft QuickExecutionDraft) (ExecutionReceipt, error) {
-	if draft.Quantity <= 0 || draft.LocalPriceMinor <= 0 {
+	if draft.LocalPriceTenThousandth <= 0 && draft.LocalPriceMinor > 0 {
+		draft.LocalPriceTenThousandth = draft.LocalPriceMinor * 100
+	}
+	if draft.Quantity <= 0 || draft.LocalPriceTenThousandth <= 0 {
 		return ExecutionReceipt{}, fmt.Errorf("成交数量和成交均价必须大于 0")
 	}
-	if int64(draft.Quantity) > math.MaxInt64/draft.LocalPriceMinor {
+	if int64(draft.Quantity) > math.MaxInt64/draft.LocalPriceTenThousandth {
 		return ExecutionReceipt{}, fmt.Errorf("本币成交额超出可记录范围")
 	}
-	localAmountMinor := draft.LocalPriceMinor * int64(draft.Quantity)
+	product := draft.LocalPriceTenThousandth * int64(draft.Quantity)
+	localAmountMinor := (product + 50) / 100
+	draft.LocalPriceMinor = (draft.LocalPriceTenThousandth + 50) / 100
 	instruments, err := s.store.ListInstruments(ctx)
 	if err != nil {
 		return ExecutionReceipt{}, err
@@ -57,8 +67,9 @@ func (s *Service) RecordQuickExecution(ctx context.Context, draft QuickExecution
 	}
 	return s.recordExecution(ctx, ExecutionDraft{
 		PlanID: draft.PlanID, InstrumentID: draft.InstrumentID, Side: draft.Side, ExecutedAt: draft.ExecutedAt,
-		Quantity: draft.Quantity, LocalPriceMinor: draft.LocalPriceMinor, LocalAmountMinor: localAmountMinor,
+		Quantity: draft.Quantity, LocalPriceMinor: draft.LocalPriceMinor, LocalPriceTenThousandth: draft.LocalPriceTenThousandth, LocalAmountMinor: localAmountMinor,
 		SettlementFen: draft.SettlementFen, ExitCode: draft.ExitCode, Evidence: draft.Evidence, BrokerReference: draft.BrokerReference,
+		Emotion: draft.Emotion,
 	}, true)
 }
 

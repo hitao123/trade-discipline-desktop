@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,19 +12,21 @@ import (
 )
 
 type ExecutionDraft struct {
-	PlanID              string    `json:"planId,omitempty"`
-	InstrumentID        string    `json:"instrumentId"`
-	Side                string    `json:"side"`
-	ExecutedAt          time.Time `json:"executedAt"`
-	Quantity            int       `json:"quantity"`
-	LocalPriceMinor     int64     `json:"localPriceMinor"`
-	LocalAmountMinor    int64     `json:"localAmountMinor"`
-	SettlementFen       int64     `json:"settlementFen"`
-	ExitCode            string    `json:"exitCode,omitempty"`
-	Evidence            string    `json:"evidence,omitempty"`
-	BrokerReference     string    `json:"brokerReference,omitempty"`
-	ReferencePriceMinor int64     `json:"referencePriceMinor,omitempty"`
-	ReferencePriceAt    time.Time `json:"referencePriceAt,omitempty"`
+	PlanID                  string           `json:"planId,omitempty"`
+	InstrumentID            string           `json:"instrumentId"`
+	Side                    string           `json:"side"`
+	ExecutedAt              time.Time        `json:"executedAt"`
+	Quantity                int              `json:"quantity"`
+	LocalPriceMinor         int64            `json:"localPriceMinor"`
+	LocalPriceTenThousandth int64            `json:"localPriceTenThousandth,omitempty"`
+	LocalAmountMinor        int64            `json:"localAmountMinor"`
+	SettlementFen           int64            `json:"settlementFen"`
+	ExitCode                string           `json:"exitCode,omitempty"`
+	Evidence                string           `json:"evidence,omitempty"`
+	BrokerReference         string           `json:"brokerReference,omitempty"`
+	ReferencePriceMinor     int64            `json:"referencePriceMinor,omitempty"`
+	ReferencePriceAt        time.Time        `json:"referencePriceAt,omitempty"`
+	Emotion                 ExecutionEmotion `json:"emotion"`
 }
 
 type CooldownReceipt struct {
@@ -47,6 +50,12 @@ func (s *Service) RecordExecution(ctx context.Context, draft ExecutionDraft) (Ex
 }
 
 func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, quickRecord bool) (ExecutionReceipt, error) {
+	if draft.LocalPriceTenThousandth <= 0 && draft.LocalPriceMinor > 0 {
+		draft.LocalPriceTenThousandth = draft.LocalPriceMinor * 100
+	}
+	if err := validateExecutionEmotion(draft.Emotion); err != nil {
+		return ExecutionReceipt{}, err
+	}
 	code, lotSize, isChinaTech, err := s.store.Instrument(ctx, draft.InstrumentID)
 	if err != nil {
 		return ExecutionReceipt{}, err
@@ -149,14 +158,18 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 	}
 	event := domain.ExecutionEvent{
 		EventType: domain.ExecutionType(draft.Side), PlanID: draft.PlanID, InstrumentID: draft.InstrumentID,
-		Code: code, Quantity: draft.Quantity, LocalPriceMinor: draft.LocalPriceMinor, LocalAmountMinor: draft.LocalAmountMinor,
+		Code: code, Quantity: draft.Quantity, LocalPriceMinor: draft.LocalPriceMinor, LocalPriceTenThousandth: draft.LocalPriceTenThousandth, LocalAmountMinor: draft.LocalAmountMinor,
 		SettlementFen: draft.SettlementFen, IsChinaTech: isChinaTech, ExitCode: draft.ExitCode, ExecutedAt: draft.ExecutedAt,
+	}
+	emotionJSON, err := json.Marshal(draft.Emotion)
+	if err != nil {
+		return ExecutionReceipt{}, fmt.Errorf("保存当时情绪失败: %w", err)
 	}
 	input := store.AppendExecutionInput{
 		Event: event, RuleVersionID: ruleID, Classification: classification, ViolationCode: violationCode,
 		ViolationFacts: map[string]any{"planId": draft.PlanID, "side": draft.Side, "quantity": draft.Quantity, "settlementFen": draft.SettlementFen},
 		Evidence:       draft.Evidence, BrokerReference: draft.BrokerReference, ReferencePriceMinor: draft.ReferencePriceMinor, ReferencePriceAt: draft.ReferencePriceAt,
-		QuickRecord: quickRecord,
+		EmotionJSON: string(emotionJSON), QuickRecord: quickRecord,
 	}
 	if violationCode != "" {
 		previousViolations, err := s.store.CountViolations(ctx)
@@ -188,6 +201,15 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 		receipt.Cooldown = &CooldownReceipt{ID: result.CooldownID, Reason: input.Cooldown.Reason, ExpectedEndsAt: input.Cooldown.ExpectedEndsAt}
 	}
 	return receipt, nil
+}
+
+func validateExecutionEmotion(emotion ExecutionEmotion) error {
+	for label, value := range map[string]int{"恐惧": emotion.FearScore, "贪婪": emotion.GreedScore, "回本/报复性冲动": emotion.RevengeScore} {
+		if value < 0 || value > 10 {
+			return fmt.Errorf("%s评分必须在 0 到 10 之间", label)
+		}
+	}
+	return nil
 }
 
 func (s *Service) ReverseExecution(ctx context.Context, id, reason string) (ExecutionReceipt, error) {
