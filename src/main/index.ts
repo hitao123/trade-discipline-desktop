@@ -1,6 +1,8 @@
 import { copyFile, mkdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
 
@@ -13,6 +15,7 @@ let shuttingDown = false
 let quitAfterSidecarStops = false
 let monitorNotificationTimer: ReturnType<typeof setInterval> | undefined
 const sessionToken = randomBytes(32).toString('hex')
+const execFileAsync = promisify(execFile)
 
 function dataPaths() {
   const root = app.getPath('userData')
@@ -23,6 +26,12 @@ function sidecarExecutable() {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'bin', 'discipline-server')
     : path.join(app.getAppPath(), 'resources', 'bin', 'discipline-server')
+}
+
+function ocrExecutable() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'bin', 'plain-rule-ocr')
+    : path.join(app.getAppPath(), 'resources', 'bin', 'plain-rule-ocr')
 }
 
 async function startBackend() {
@@ -131,6 +140,32 @@ function registerIPC() {
     const filePath = result.filePaths[0]
     const content = await import('node:fs/promises').then(fs => fs.readFile(filePath, 'utf8'))
     return { name: path.basename(filePath), content }
+  })
+  ipcMain.handle('recognize-execution-screenshot', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: '券商成交截图', extensions: ['png', 'jpg', 'jpeg', 'heic'] }],
+    })
+    const filePath = result.filePaths[0]
+    if (result.canceled || !filePath) return null
+    try {
+      const { stdout } = await execFileAsync(ocrExecutable(), [filePath], {
+        timeout: 15_000,
+        maxBuffer: 2 * 1024 * 1024,
+        encoding: 'utf8',
+      })
+      const payload = JSON.parse(stdout) as { lines?: Array<{ text?: unknown; confidence?: unknown }> }
+      if (!Array.isArray(payload.lines)) throw new Error('识别程序没有返回文字行')
+      const lines = payload.lines
+        .filter(line => typeof line.text === 'string' && typeof line.confidence === 'number')
+        .map(line => ({ text: line.text as string, confidence: line.confidence as number }))
+      if (lines.length === 0) throw new Error('截图中没有识别到文字')
+      return { name: path.basename(filePath), lines }
+    }
+    catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      throw new Error(`截图识别失败：${message}`)
+    }
   })
   ipcMain.handle('select-backup', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Plain Rule Backup', extensions: ['db'] }] })

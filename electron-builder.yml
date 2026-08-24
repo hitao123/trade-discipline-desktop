@@ -9,6 +9,8 @@ files:
 extraResources:
   - from: resources/bin/discipline-server
     to: bin/discipline-server
+  - from: resources/bin/plain-rule-ocr
+    to: bin/plain-rule-ocr
 directories:
   output: release
 mac:
