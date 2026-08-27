@@ -135,9 +135,9 @@ func (p *EastmoneyProvider) FetchRankings(ctx context.Context, kind RankingKind)
 			Code: item.Code, Market: item.Market, Name: item.Name, QuoteUnix: item.QuoteUnix,
 		})
 	}
-	limit := 20
+	limit := StockRankingLimit
 	if kind == KindETF {
-		limit = 10
+		limit = ETFRankingLimit
 	}
 	return normalizeRanking(rows, kind, limit), nil
 }
@@ -179,6 +179,8 @@ func (p *EastmoneyProvider) FetchQuotes(ctx context.Context, keys []InstrumentKe
 	query := parsed.Query()
 	query.Set("secids", strings.Join(secids, ","))
 	query.Set("fields", "f2,f3,f6,f12,f13,f14,f124")
+	query.Set("fltt", "2")
+	query.Set("invt", "2")
 	parsed.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -214,15 +216,12 @@ func (p *EastmoneyProvider) FetchQuotes(ctx context.Context, keys []InstrumentKe
 		if !ok {
 			continue
 		}
-		priceMinor := int64(math.Round(float64(row.Price)))
-		if row.Market == 116 {
-			priceMinor = int64(math.Round(float64(row.Price) / 10))
-		}
+		priceMinor := int64(math.Round(float64(row.Price) * 100))
 		sourceTime := time.Unix(row.QuoteUnix, 0).In(location)
 		quotes = append(quotes, Quote{
 			TradeDate: sourceTime.Format("2006-01-02"), Market: key.Market, Code: key.Code, Name: row.Name,
 			AssetType: KindStock, CloseMinor: priceMinor, ChangeBP: int(math.Round(float64(row.ChangePct))),
-			TurnoverFen: int64(math.Round(float64(row.Turnover) * 100)), Source: "eastmoney-public-close", SourceTime: sourceTime.UTC(),
+			TurnoverFen: int64(math.Round(float64(row.Turnover) * 100)), Source: "eastmoney-public-quote-decimal", SourceTime: sourceTime.UTC(),
 		})
 	}
 	return quotes, nil
@@ -234,6 +233,9 @@ func normalizeRanking(rows []eastmoneyRow, kind RankingKind, limit int) []Quote 
 	for _, row := range rows {
 		nameUpper := strings.ToUpper(strings.TrimSpace(row.Name))
 		if kind == KindStock && (strings.Contains(nameUpper, "ST") || strings.Contains(nameUpper, "退")) {
+			continue
+		}
+		if kind == KindETF && !visibleETF(row.Code, row.Name) {
 			continue
 		}
 		if row.Price < 0 || row.Turnover < 0 || row.Code == "" {

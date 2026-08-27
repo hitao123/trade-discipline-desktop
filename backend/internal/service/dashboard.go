@@ -9,6 +9,7 @@ import (
 )
 
 type Dashboard struct {
+	ProfileMode       domain.UserMode       `json:"profileMode"`
 	InitialCapitalFen int64                 `json:"initialCapitalFen"`
 	Portfolio         domain.PortfolioState `json:"portfolio"`
 	LossCautionFen    int64                 `json:"lossCautionFen"`
@@ -22,6 +23,10 @@ type Dashboard struct {
 }
 
 func (s *Service) Dashboard(ctx context.Context) (Dashboard, error) {
+	profile, err := s.store.UserProfile(ctx)
+	if err != nil {
+		return Dashboard{}, err
+	}
 	rule, err := s.store.CurrentRule(ctx)
 	if err != nil {
 		return Dashboard{}, err
@@ -43,8 +48,12 @@ func (s *Service) Dashboard(ctx context.Context) (Dashboard, error) {
 		portfolio.ActiveCooldownUntil = cooldown.ExpectedEndsAt
 		allowedAction = "冷静期内只允许记录、减仓、风险退出和复盘"
 	}
+	initialCapitalFen := profile.InvestableCapitalFen
+	if initialCapitalFen <= 0 {
+		initialCapitalFen = rule.InitialCapitalFen
+	}
 	return Dashboard{
-		InitialCapitalFen: rule.InitialCapitalFen, Portfolio: portfolio, LossCautionFen: rule.LossCautionFen,
+		ProfileMode: profile.Mode, InitialCapitalFen: initialCapitalFen, Portfolio: portfolio, LossCautionFen: rule.LossCautionFen,
 		LossRedLineFen: rule.LossRedLineFen, LossUsedFen: portfolio.CumulativeLossFen,
 		ChinaTechLimitFen: rule.ChinaTechLimitFen, ViolationCount: violations, AllowedAction: allowedAction,
 		Cooldown: cooldown, LastMarketFetch: s.store.LatestSuccessfulMarketFetch(ctx),

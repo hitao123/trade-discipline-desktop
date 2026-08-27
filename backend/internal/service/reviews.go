@@ -17,16 +17,23 @@ type WeeklyReviewDraft struct {
 }
 
 func (s *Service) SaveWeeklyReview(ctx context.Context, draft WeeklyReviewDraft) (store.WeeklyReviewRow, error) {
-	start, err := time.Parse("2006-01-02", draft.PeriodStart)
+	start, err := parseShanghaiDate(draft.PeriodStart)
 	if err != nil {
 		return store.WeeklyReviewRow{}, fmt.Errorf("复盘开始日期无效")
 	}
-	end, err := time.Parse("2006-01-02", draft.PeriodEnd)
+	end, err := parseShanghaiDate(draft.PeriodEnd)
 	if err != nil || end.Before(start) {
 		return store.WeeklyReviewRow{}, fmt.Errorf("复盘结束日期无效")
 	}
 	if strings.TrimSpace(draft.NextAllowedAction) == "" {
 		return store.WeeklyReviewRow{}, fmt.Errorf("请写明下周唯一允许动作")
+	}
+	pending, err := s.store.PendingPostTradeReviews(ctx, start, end.AddDate(0, 0, 1).Add(-time.Nanosecond))
+	if err != nil {
+		return store.WeeklyReviewRow{}, err
+	}
+	if len(pending) > 0 {
+		return store.WeeklyReviewRow{}, CodedError{Code: "PENDING_POST_TRADE_REVIEW", Message: fmt.Sprintf("本周还有 %d 笔成交待纪律复盘", len(pending))}
 	}
 	dashboard, err := s.Dashboard(ctx)
 	if err != nil {

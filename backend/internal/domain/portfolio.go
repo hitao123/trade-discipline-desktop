@@ -5,6 +5,10 @@ import "time"
 type PositionState struct {
 	InstrumentID         string    `json:"instrumentId"`
 	Code                 string    `json:"code"`
+	Name                 string    `json:"name"`
+	Market               string    `json:"market"`
+	Currency             string    `json:"currency"`
+	LotSize              int       `json:"lotSize"`
 	Quantity             int       `json:"quantity"`
 	CostFen              int64     `json:"costFen"`
 	MarketValueFen       int64     `json:"marketValueFen"`

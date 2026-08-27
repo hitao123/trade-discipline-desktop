@@ -1,3 +1,27 @@
+export type UserMode = 'legacy' | 'generic'
+export type OnboardingStatus = 'pending' | 'completed'
+export type HoldingHorizon = 'under_6m' | '6_to_12m' | '1_to_3y' | 'over_3y' | 'legacy_unspecified'
+export type MarketScope = 'ashare_stock' | 'ashare_etf' | 'hk'
+
+export interface UserProfile {
+  id: string
+  mode: UserMode
+  onboardingStatus: OnboardingStatus
+  investableCapitalFen: number
+  maxLossFen: number
+  holdingHorizon: HoldingHorizon
+  enabledMarkets: MarketScope[]
+  completedAt?: string
+  updatedAt: string
+}
+
+export interface CompleteOnboardingInput {
+  investableCapitalFen: number
+  maxLossFen: number
+  holdingHorizon: Exclude<HoldingHorizon, 'legacy_unspecified'>
+  enabledMarkets: MarketScope[]
+}
+
 export interface Instrument {
   id: string
   market: 'HK' | 'SH' | 'SZ'
@@ -27,6 +51,10 @@ export interface PlanRecord {
 export interface Position {
   instrumentId: string
   code: string
+  name: string
+  market: 'HK' | 'SH' | 'SZ'
+  currency: 'CNY' | 'HKD'
+  lotSize: number
   quantity: number
   costFen: number
   marketValueFen: number
@@ -45,6 +73,43 @@ export interface Portfolio {
   cumulativeLossFen: number
   alibabaObservationTradingDays: number
   disciplineScoreBP: number
+}
+
+export interface ExecutionRecord {
+  id: string
+  planId?: string
+  instrumentId: string
+  code: string
+  name: string
+  side: 'buy' | 'sell'
+  quantity: number
+  localPriceMinor: number
+  localPriceTenThousandth: number
+  localAmountMinor: number
+  settlementFen: number
+  exitCode?: string
+  evidence?: string
+  brokerReference?: string
+  emotion: { fearScore: number; greedScore: number; revengeScore: number }
+  executedAt: string
+  quickRecord: boolean
+}
+
+export interface PostTradeReview {
+  id: string
+  executionId: string
+  status: 'pending' | 'completed'
+  note: string
+  createdAt: string
+  completedAt?: string
+  instrumentId: string
+  side: 'buy' | 'sell'
+  quantity: number
+  localPriceMinor: number
+  localPriceTenThousandth?: number
+  settlementFen: number
+  emotion?: { fearScore: number; greedScore: number; revengeScore: number }
+  executedAt: string
 }
 
 export type MonitorInterval = 'off' | '10m' | '15m' | '30m'
@@ -75,6 +140,7 @@ export interface PriceAlert {
 }
 
 export interface Dashboard {
+  profileMode: UserMode
   initialCapitalFen: number
   portfolio: Portfolio
   lossCautionFen: number
@@ -111,24 +177,37 @@ export interface MarketSnapshot {
   entries: MarketQuote[]
 }
 
+export type MarketHealthState = 'live' | 'delayed' | 'cached' | 'unavailable'
+
+export interface MarketComponentHealth {
+  state: MarketHealthState
+  source?: string
+  sourceTime?: string
+  lastSuccessfulAt?: string
+  message?: string
+  detailCode?: string
+}
+
 export interface MarketRefreshStatus {
 	mode: 'close' | 'live'
 	lastAttemptAt?: string
 	lastSuccessfulAt?: string
 	errors?: Record<string, string>
+	components?: Record<string, MarketComponentHealth>
 }
 
 export interface MarketResult {
   stock: MarketSnapshot
   etf: MarketSnapshot
-  overview: MarketOverviewResult
+	overview: MarketOverviewResult
 	errors?: Record<string, string>
+	health?: Record<string, MarketComponentHealth>
 	status?: MarketRefreshStatus
 }
 
 export interface LiveMarketResult extends MarketResult {
 	isLive: boolean
-	state: 'live' | 'market_closed'
+	state: 'live' | 'market_closed' | 'degraded' | 'unavailable'
 }
 
 export type MarketRange = '1m' | '3m'
@@ -199,9 +278,11 @@ export interface AllocationItem {
   name: string
   targetWeightBP: number
   targetShares: number
+  instrumentCodes: string[]
   buyRule: string
   sellRule: string
   note: string
+  role?: 'holding' | 'cash'
 }
 
 export interface AllocationDraft {
@@ -239,6 +320,17 @@ export interface AllocationItemProgress {
   rebalanceTargetFen: number
   rebalanceGapFen: number
   latestValueRecorded?: AllocationValueEvent
+  linkedValueFen: number
+  manualAdjustmentFen: number
+  linkedPositions: Position[]
+  latestAdjustment?: {
+    id: string
+    itemKey: string
+    adjustmentFen: number
+    source: 'manual_adjustment'
+    observedAt: string
+    createdAt: string
+  }
 }
 
 export interface AllocationOverview {
@@ -249,4 +341,11 @@ export interface AllocationOverview {
   returnBP: number
   goalGapFen: number
   items: AllocationItemProgress[]
+  unassignedPositions: Position[]
+}
+
+export interface AllocationState {
+  configured: boolean
+  suggestedCapitalFen: number
+  overview?: AllocationOverview
 }

@@ -2,11 +2,13 @@
 import { computed, onMounted } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
+import MarketHealthStrip from '@/renderer/components/market/MarketHealthStrip.vue'
 import InstrumentHistoryPanel from '@/renderer/components/market/InstrumentHistoryPanel.vue'
 import MarketOverviewPanel from '@/renderer/components/market/MarketOverviewPanel.vue'
 import MarketTable from '@/renderer/components/market/MarketTable.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import { useMarketHistory } from '@/renderer/composables/useMarketHistory'
+import { useOptionalUserProfile } from '@/renderer/composables/useUserProfile'
 import { api } from '@/renderer/lib/api'
 import type { MarketQuote } from '@/renderer/types'
 
@@ -23,6 +25,7 @@ const {
   notice,
   activeSnapshot,
   activeStatus,
+  activeHealth,
   selectedKey,
   load,
   refreshAll,
@@ -35,6 +38,10 @@ const {
 } = useMarketHistory()
 
 const isLiveMode = computed(() => mode.value === 'live')
+const userProfile = useOptionalUserProfile()
+const stockEnabled = computed(() => userProfile?.profile.value?.mode !== 'generic' || userProfile.profile.value.enabledMarkets.includes('ashare_stock'))
+const etfEnabled = computed(() => userProfile?.profile.value?.mode !== 'generic' || userProfile.profile.value.enabledMarkets.includes('ashare_etf'))
+const rankingEnabled = computed(() => stockEnabled.value || etfEnabled.value)
 const pageCopy = computed(() => isLiveMode.value
   ? {
       eyebrow: 'LIVE TURNOVER',
@@ -51,9 +58,8 @@ const pageCopy = computed(() => isLiveMode.value
 
 const statusMessage = computed(() => {
   const status = activeStatus.value
-  const errors = Object.values(status?.errors ?? {})
-  if (errors.length > 0) return '最近刷新异常：' + errors.join('；')
-  if (status?.lastSuccessfulAt) return '最近成功刷新 ' + new Date(status.lastSuccessfulAt).toLocaleString('zh-CN', { hour12: false })
+	if (status?.lastAttemptAt) return '最近检查 ' + new Date(status.lastAttemptAt).toLocaleString('zh-CN', { hour12: false })
+	if (status?.lastSuccessfulAt) return '最近成功刷新 ' + new Date(status.lastSuccessfulAt).toLocaleString('zh-CN', { hour12: false })
   return '尚未手动刷新'
 })
 
@@ -75,7 +81,13 @@ async function addWatch(quote: MarketQuote) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  if (!rankingEnabled.value)
+    return
+  if (!stockEnabled.value && etfEnabled.value)
+    setTab('etf')
+  void load()
+})
 </script>
 
 <template>
@@ -92,6 +104,9 @@ onMounted(load)
 
     <ErrorNotice :message="error" />
     <p v-if="notice" class="success-notice" role="status">{{ notice }}</p>
+    <p v-if="!rankingEnabled" class="live-note">当前公开榜单仅覆盖 A 股股票与 ETF；你的工作区目前只启用了港股。</p>
+
+    <template v-if="rankingEnabled">
 
     <div class="mode-tabs" role="tablist" aria-label="数据时段">
       <button type="button" :class="{ active: mode === 'close' }" @click="setMode('close')">收盘榜单</button>
@@ -99,6 +114,8 @@ onMounted(load)
     </div>
 
     <p v-if="isLiveMode" class="live-note">实时成交额仅在 A 股连续竞价时段可更新。休市、午休和周末会显示最近一次本地快照。</p>
+
+	<MarketHealthStrip :health="activeHealth" :mode="mode" />
 
     <MarketOverviewPanel
       v-if="!isLiveMode"
@@ -109,11 +126,11 @@ onMounted(load)
     />
 
     <div class="tabs" role="tablist" aria-label="榜单类型">
-      <button type="button" :class="{ active: tab === 'stock' }" @click="setTab('stock')">
+      <button v-if="stockEnabled" type="button" :class="{ active: tab === 'stock' }" @click="setTab('stock')">
         沪深股票前 20
       </button>
-      <button type="button" :class="{ active: tab === 'etf' }" @click="setTab('etf')">
-        ETF 前 10
+      <button v-if="etfEnabled" type="button" :class="{ active: tab === 'etf' }" @click="setTab('etf')">
+        ETF 前 20
       </button>
     </div>
 
@@ -139,6 +156,7 @@ onMounted(load)
       @select-history="selectHistory"
       @watch="addWatch"
     />
+    </template>
   </div>
 </template>
 

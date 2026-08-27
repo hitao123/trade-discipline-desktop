@@ -113,7 +113,7 @@ func (s *Store) ListPlans(ctx context.Context) ([]PlanRow, error) {
 		return nil, fmt.Errorf("list plans: %w", err)
 	}
 	defer rows.Close()
-	var plans []PlanRow
+	plans := make([]PlanRow, 0)
 	for rows.Next() {
 		var plan PlanRow
 		var draftJSON, validationJSON, created string
@@ -176,7 +176,7 @@ func (s *Store) ListRuleVersions(ctx context.Context) ([]RuleVersionRow, error) 
 		return nil, fmt.Errorf("list rules: %w", err)
 	}
 	defer rows.Close()
-	var versions []RuleVersionRow
+	versions := make([]RuleVersionRow, 0)
 	for rows.Next() {
 		var item RuleVersionRow
 		var raw, created string

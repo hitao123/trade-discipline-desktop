@@ -19,6 +19,13 @@ type MonitorResult struct {
 }
 
 func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
+	profile, err := s.store.UserProfile(ctx)
+	if err != nil {
+		return MonitorResult{}, err
+	}
+	if profile.OnboardingStatus != domain.OnboardingCompleted {
+		return MonitorResult{Status: MonitorStatus{Enabled: false, Interval: "off"}}, nil
+	}
 	now := s.now().UTC()
 	settings, err := s.store.MonitorSettings(ctx)
 	if err != nil {
@@ -76,8 +83,15 @@ func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
 		keys = append(keys, item.key)
 	}
 	quotes, err := s.marketProvider.FetchQuotes(ctx, keys)
+	if err != nil && s.quoteFallback != nil {
+		fallbackQuotes, fallbackErr := s.quoteFallback.FetchQuotes(ctx, keys)
+		if fallbackErr == nil && validQuoteFallback(now, keys, fallbackQuotes) {
+			quotes = fallbackQuotes
+			err = nil
+		}
+	}
 	if err != nil {
-		status.LastError = err.Error()
+		status.LastError = "报价来源暂不可用，未评估提醒"
 		return s.finishMonitorRun(ctx, MonitorResult{Status: status})
 	}
 	byCode := make(map[string]market.Quote, len(quotes))
@@ -90,8 +104,8 @@ func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
 		if !ok {
 			continue
 		}
-		if quote.SourceTime.After(now) || now.Sub(quote.SourceTime) > 20*time.Minute {
-			result.Status.LastError = "报价时间异常或已超过 20 分钟，未触发提醒"
+		if !freshAlertQuote(now, quote) {
+			result.Status.LastError = "报价不是当日有效数据，未触发提醒"
 			continue
 		}
 		result.Checked++
@@ -124,6 +138,20 @@ func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
 	}
 	result.Status.LastSuccessfulAt = &now
 	return s.finishMonitorRun(ctx, result)
+}
+
+func freshAlertQuote(now time.Time, quote market.Quote) bool {
+	if quote.SourceTime.IsZero() || quote.SourceTime.After(now) || now.Sub(quote.SourceTime) > 20*time.Minute {
+		return false
+	}
+	if quote.TradeDate == "" {
+		return true
+	}
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return false
+	}
+	return quote.TradeDate == now.In(location).Format("2006-01-02")
 }
 
 func (s *Service) finishMonitorRun(ctx context.Context, result MonitorResult) (MonitorResult, error) {

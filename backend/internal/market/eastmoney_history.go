@@ -384,10 +384,22 @@ func combineMetricPoints(left, right []MetricPoint, metric MetricKind) []MetricP
 		}
 		combined = append(combined, MetricPoint{
 			TradeDate: point.TradeDate, Metric: metric, ValueFen: point.ValueFen + other.ValueFen,
-			Source: "eastmoney-public-derived", SourceTime: sourceTime,
+			Source: derivedMetricSource(point.Source, other.Source), SourceTime: sourceTime,
 		})
 	}
 	return combined
+}
+
+func derivedMetricSource(left, right string) string {
+	if left == right {
+		switch {
+		case strings.HasPrefix(left, "eastmoney-"):
+			return "eastmoney-public-derived"
+		case strings.HasPrefix(left, "sina-"):
+			return "sina-public-derived"
+		}
+	}
+	return "mixed-public-derived"
 }
 
 func eastmoneySecID(key InstrumentKey) (string, error) {

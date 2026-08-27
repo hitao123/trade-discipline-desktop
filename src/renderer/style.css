@@ -45,6 +45,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   min-height: 100vh;
 }
 
+.app-gate {
+  display: grid;
+  min-height: 100vh;
+  padding: 40px;
+  place-content: center;
+  justify-items: center;
+  color: var(--ink-muted);
+  background: var(--paper);
+  text-align: center;
+}
+.app-gate__logo { width: 52px; height: 52px; margin-bottom: 18px; }
+.app-gate__name { margin: 0; color: var(--ink); font-family: var(--font-serif); font-size: 28px; }
+.app-gate .button { margin-top: 14px; }
+
 .sidebar {
   display: flex;
   flex-direction: column;

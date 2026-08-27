@@ -10,6 +10,9 @@ type RankingKind string
 const (
 	KindStock RankingKind = "stock"
 	KindETF   RankingKind = "etf"
+
+	StockRankingLimit = 20
+	ETFRankingLimit   = 20
 )
 
 type SnapshotMode string
@@ -21,6 +24,10 @@ const (
 
 type RankingProvider interface {
 	FetchRankings(ctx context.Context, kind RankingKind) ([]Quote, error)
+}
+
+type QuoteProvider interface {
+	FetchQuotes(ctx context.Context, keys []InstrumentKey) ([]Quote, error)
 }
 
 type InstrumentKey struct {

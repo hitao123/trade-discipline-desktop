@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/local/trade-discipline-desktop/backend/internal/domain"
 	"github.com/local/trade-discipline-desktop/backend/internal/store"
 )
 
@@ -53,7 +54,8 @@ func TestInvalidBackupNeverReplacesCurrentDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if _, err := reopened.CurrentRule(context.Background()); err != nil {
+	profile, err := reopened.UserProfile(context.Background())
+	if err != nil || profile.OnboardingStatus != domain.OnboardingPending {
 		t.Fatalf("current database was damaged: %v", err)
 	}
 }

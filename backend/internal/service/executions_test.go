@@ -7,10 +7,18 @@ import (
 	"time"
 
 	"github.com/local/trade-discipline-desktop/backend/internal/market"
+	"github.com/local/trade-discipline-desktop/backend/internal/rules"
 	"github.com/local/trade-discipline-desktop/backend/internal/store"
 )
 
 func openExecutionService(t *testing.T) *Service {
+	t.Helper()
+	svc := openExecutionServiceWithoutSeed(t)
+	seedLegacyTestData(t, svc.store)
+	return svc
+}
+
+func openExecutionServiceWithoutSeed(t *testing.T) *Service {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "discipline.db"))
 	if err != nil {
@@ -22,6 +30,7 @@ func openExecutionService(t *testing.T) *Service {
 	}
 	svc := New(db, func() time.Time { return time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC) })
 	svc.SetMarketRankingFallback(fakeMarketProvider{})
+	svc.SetMarketQuoteFallback(nil)
 	return svc
 }
 
@@ -41,6 +50,59 @@ func TestPortfolioUsesLatestHKCloseWithConservativeRMBRate(t *testing.T) {
 	position := portfolio.Positions["hk-9988"]
 	if position.MarketValueFen != 1_159_000 || position.UnrealizedPnLFen != -46_000 || portfolio.CumulativeLossFen != 46_000 {
 		t.Fatalf("portfolio=%#v position=%#v", portfolio, position)
+	}
+	if position.Name != "阿里巴巴-W" || position.Market != "HK" || position.Currency != "HKD" || position.LotSize != 100 {
+		t.Fatalf("missing instrument metadata: %#v", position)
+	}
+}
+
+func TestExecutionUsesGenericRuleWithoutPersonalShareLimit(t *testing.T) {
+	svc := openGenericService(t, 20_000_000, 2_000_000)
+	if _, err := svc.store.DB().Exec(`INSERT INTO instruments(
+		id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status
+	) VALUES('hk-0700','HK','0700.HK','测试港股','stock','HKD',100,'test',1,0,'active')`); err != nil {
+		t.Fatal(err)
+	}
+	draft := validPlanDraft()
+	draft.InstrumentID = "hk-0700"
+	draft.EntryLowMinor = 47_000
+	draft.EntryHighMinor = 49_000
+	draft.RiskExitMinor = 40_000
+	draft.Quantity = 200
+	draft.EstimatedCostFen = 9_600_000
+	draft.MaxPlanLossFen = 960_000
+	draft.StressDropBP = 1_000
+	plan, err := svc.CreatePlan(context.Background(), draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status != "qualified" {
+		t.Fatalf("generic plan should not use the legacy Tencent cap: %#v", plan.Validation.Findings)
+	}
+	receipt, err := svc.RecordExecution(context.Background(), ExecutionDraft{
+		PlanID: plan.ID, InstrumentID: "hk-0700", Side: "buy", Quantity: 200,
+		SettlementFen: -9_600_000, ExecutedAt: time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Classification != "compliant" || receipt.Position.Quantity != 200 {
+		t.Fatalf("receipt=%#v", receipt)
+	}
+}
+
+func TestGenericPortfolioCashUsesAccountInsteadOfLatestRuleReferenceCapital(t *testing.T) {
+	svc := openGenericService(t, 20_000_000, 2_000_000)
+	changed := rules.GenericSnapshot(30_000_000, 3_000_000)
+	if _, err := svc.store.CreateRuleVersion(context.Background(), "测试风险基准变化", changed, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	portfolio, err := svc.Portfolio(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if portfolio.AvailableCashFen != 20_000_000 {
+		t.Fatalf("cash must replay from immutable account funding, got %d", portfolio.AvailableCashFen)
 	}
 }
 
@@ -215,5 +277,40 @@ func TestReverseExecutionRestoresCashAndHoldingWithoutDeletingHistory(t *testing
 	}
 	if err := svc.store.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action='reversed'`).Scan(&audits); err != nil || audits != 1 {
 		t.Fatalf("audits=%d err=%v", audits, err)
+	}
+}
+
+func TestCorrectExecutionAtomicallyReplacesFactAndCurrentDisciplineState(t *testing.T) {
+	svc := openExecutionService(t)
+	recorded, err := svc.RecordQuickExecution(context.Background(), QuickExecutionDraft{
+		InstrumentID: "hk-9988", Side: "buy", Quantity: 100, LocalPriceMinor: 12_000,
+		SettlementFen: -1_205_000, ExecutedAt: time.Date(2026, 8, 12, 7, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected, err := svc.CorrectExecution(context.Background(), recorded.ID, "成交数量录错", ExecutionDraft{
+		InstrumentID: "hk-9988", Side: "buy", Quantity: 80, LocalPriceMinor: 12_000,
+		LocalPriceTenThousandth: 1_200_000, LocalAmountMinor: 960_000, SettlementFen: -964_000,
+		ExecutedAt: time.Date(2026, 8, 12, 7, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if corrected.Position.Quantity != 80 || corrected.CashFen != 19_036_000 || !corrected.PendingReview {
+		t.Fatalf("corrected receipt=%#v", corrected)
+	}
+	for query, want := range map[string]int{
+		`SELECT count(*) FROM execution_events`:                                                  3,
+		`SELECT count(*) FROM execution_corrections`:                                             1,
+		`SELECT count(*) FROM violation_events WHERE acknowledged_at IS NULL`:                    1,
+		`SELECT count(*) FROM cooldown_periods WHERE actual_ends_at IS NULL`:                     1,
+		`SELECT count(*) FROM post_trade_reviews WHERE status='pending'`:                         1,
+		`SELECT count(*) FROM audit_events WHERE entity_type='execution' AND action='corrected'`: 1,
+	} {
+		var got int
+		if err := svc.store.DB().QueryRow(query).Scan(&got); err != nil || got != want {
+			t.Fatalf("query=%s got=%d want=%d err=%v", query, got, want, err)
+		}
 	}
 }

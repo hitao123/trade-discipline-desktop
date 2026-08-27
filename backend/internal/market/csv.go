@@ -29,7 +29,7 @@ type CSVPreview struct {
 	Errors     []CSVRowError  `json:"errors"`
 	Duplicates []CSVDuplicate `json:"duplicates"`
 	StockTop20 []Quote        `json:"stockTop20"`
-	ETFTop10   []Quote        `json:"etfTop10"`
+	ETFTop20   []Quote        `json:"etfTop20"`
 }
 
 func PreviewCSV(reader io.Reader) CSVPreview {
@@ -75,8 +75,8 @@ func PreviewCSV(reader io.Reader) CSVPreview {
 		}
 		preview.Valid = append(preview.Valid, quote)
 	}
-	preview.StockTop20 = topQuotes(preview.Valid, KindStock, 20)
-	preview.ETFTop10 = topQuotes(preview.Valid, KindETF, 10)
+	preview.StockTop20 = topQuotes(preview.Valid, KindStock, StockRankingLimit)
+	preview.ETFTop20 = topQuotes(preview.Valid, KindETF, ETFRankingLimit)
 	return preview
 }
 
@@ -118,7 +118,7 @@ func parseCSVRecord(record []string) (Quote, string) {
 func topQuotes(all []Quote, kind RankingKind, limit int) []Quote {
 	filtered := make([]Quote, 0)
 	for _, quote := range all {
-		if quote.AssetType == kind {
+		if quote.AssetType == kind && (kind != KindETF || visibleETF(quote.Code, quote.Name)) {
 			filtered = append(filtered, quote)
 		}
 	}

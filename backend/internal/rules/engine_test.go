@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,15 @@ func assertFinding(t *testing.T, decision Decision, code string, severity Severi
 		}
 	}
 	t.Fatalf("finding %s/%s missing from %#v", code, severity, decision.Findings)
+}
+
+func hasFinding(decision Decision, code string) bool {
+	for _, finding := range decision.Findings {
+		if finding.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEvaluatePlanRejectsNonBoardLotButKeepsDraftSavable(t *testing.T) {
@@ -158,4 +168,46 @@ func TestEvaluatePlanRejectsMissingReasonsAndStalePrice(t *testing.T) {
 	got := EvaluatePlan(fixedNow, initialRule(), emptyPortfolio(), p)
 	assertFinding(t, got, "THESIS_REQUIRED", SeverityHard)
 	assertFinding(t, got, "STALE_REFERENCE_PRICE", SeverityHard)
+}
+
+func TestGenericRuleSkipsPersonalGatesButKeepsCommonDiscipline(t *testing.T) {
+	rule := GenericSnapshot(20_000_000, 2_000_000)
+	state := emptyPortfolio()
+	state.ChinaTechUnrealizedPnLFen = -20_000
+	state.AlibabaObservationTradingDays = 0
+	state.DisciplineScoreBP = 0
+	plan := validTencentPlan()
+	plan.Quantity = 200
+	plan.EstimatedCostFen = 9_600_000
+	plan.StressDropBP = 1_000
+
+	got := EvaluatePlan(fixedNow, rule, state, plan)
+	for _, code := range []string{
+		"INSTRUMENT_SHARE_LIMIT", "TENCENT_SEQUENCE_GATE",
+		"CHINA_TECH_EXPOSURE_LIMIT", "NO_CROSS_INSTRUMENT_AVERAGING",
+	} {
+		if hasFinding(got, code) {
+			t.Fatalf("generic rule must not emit %s: %#v", code, got.Findings)
+		}
+	}
+	if !got.Qualified {
+		t.Fatalf("generic plan should qualify: %#v", got.Findings)
+	}
+
+	state.Positions[plan.InstrumentID] = domain.PositionState{
+		InstrumentID:     plan.InstrumentID,
+		Quantity:         100,
+		UnrealizedPnLFen: -10_000,
+	}
+	got = EvaluatePlan(fixedNow, rule, state, plan)
+	assertFinding(t, got, "NO_ADD_TO_LOSER", SeverityHard)
+
+	plan.MaxPlanLossFen = 2_000_001
+	got = EvaluatePlan(fixedNow, rule, emptyPortfolio(), plan)
+	assertFinding(t, got, "PORTFOLIO_LOSS_RED_LINE", SeverityHard)
+	for _, finding := range got.Findings {
+		if finding.Code == "PORTFOLIO_LOSS_RED_LINE" && strings.Contains(finding.Message, "20,000") {
+			t.Fatalf("loss message must use configured amount rather than a hard-coded label: %q", finding.Message)
+		}
+	}
 }

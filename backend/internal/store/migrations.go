@@ -14,6 +14,17 @@ var migrationStatements = []string{
 		status TEXT NOT NULL CHECK(status IN ('active','inactive'))
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS one_active_account ON accounts(status) WHERE status = 'active'`,
+	`CREATE TABLE IF NOT EXISTS user_profiles (
+		id TEXT PRIMARY KEY CHECK(id='local-user'),
+		mode TEXT NOT NULL CHECK(mode IN ('legacy','generic')),
+		onboarding_status TEXT NOT NULL CHECK(onboarding_status IN ('pending','completed')),
+		investable_capital_fen INTEGER,
+		max_loss_fen INTEGER,
+		holding_horizon TEXT,
+		enabled_markets_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(enabled_markets_json)),
+		completed_at TEXT,
+		updated_at TEXT NOT NULL
+	)`,
 	`CREATE TABLE IF NOT EXISTS rule_versions (
 		id TEXT PRIMARY KEY,
 		version INTEGER NOT NULL UNIQUE,
@@ -54,7 +65,8 @@ var migrationStatements = []string{
 		snapshot_mode TEXT PRIMARY KEY CHECK(snapshot_mode IN ('close','live')),
 		last_attempt_at TEXT NOT NULL,
 		last_success_at TEXT,
-		errors_json TEXT NOT NULL CHECK(json_valid(errors_json))
+		errors_json TEXT NOT NULL CHECK(json_valid(errors_json)),
+		health_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(health_json))
 	)`,
 	`CREATE TABLE IF NOT EXISTS market_rank_entries (
 		id TEXT PRIMARY KEY,
@@ -137,6 +149,7 @@ var migrationStatements = []string{
 		rule_version_id TEXT NOT NULL REFERENCES rule_versions(id),
 		quantity INTEGER NOT NULL,
 		local_price_minor INTEGER NOT NULL,
+		local_price_ten_thousandth INTEGER NOT NULL,
 		local_amount_minor INTEGER NOT NULL,
 		settlement_fen INTEGER NOT NULL,
 		exit_code TEXT,
@@ -148,6 +161,26 @@ var migrationStatements = []string{
 		executed_at TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS post_trade_reviews (
+		id TEXT PRIMARY KEY,
+		execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		status TEXT NOT NULL CHECK(status IN ('pending','completed')),
+		note TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		completed_at TEXT
+	)`,
+	`CREATE INDEX IF NOT EXISTS post_trade_review_status ON post_trade_reviews(status, created_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS execution_fx_observations (
+		id TEXT PRIMARY KEY,
+		execution_id TEXT NOT NULL REFERENCES execution_events(id),
+		base_currency TEXT NOT NULL,
+		quote_currency TEXT NOT NULL,
+		rate_minor INTEGER NOT NULL CHECK(rate_minor > 0),
+		source TEXT NOT NULL,
+		source_time TEXT NOT NULL,
+		observed_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS execution_fx_time ON execution_fx_observations(execution_id, observed_at DESC)`,
 	`CREATE TABLE IF NOT EXISTS cash_events (
 		id TEXT PRIMARY KEY,
 		event_type TEXT NOT NULL,
@@ -169,12 +202,21 @@ var migrationStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS cooldown_periods (
 		id TEXT PRIMARY KEY,
+		execution_id TEXT REFERENCES execution_events(id),
 		reason TEXT NOT NULL,
 		severity TEXT NOT NULL,
 		starts_at TEXT NOT NULL,
 		expected_ends_at TEXT NOT NULL,
 		actual_ends_at TEXT,
 		allowed_actions_json TEXT NOT NULL CHECK(json_valid(allowed_actions_json))
+	)`,
+	`CREATE TABLE IF NOT EXISTS execution_corrections (
+		id TEXT PRIMARY KEY,
+		original_execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		reversal_execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		replacement_execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		reason TEXT NOT NULL,
+		created_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS weekly_reviews (
 		id TEXT PRIMARY KEY,
@@ -256,4 +298,14 @@ var migrationStatements = []string{
 		created_at TEXT NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS allocation_value_latest ON allocation_value_events(profile_id, item_key, observed_at DESC, created_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS allocation_adjustment_events (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL REFERENCES allocation_profiles(id),
+		item_key TEXT NOT NULL,
+		adjustment_fen INTEGER NOT NULL,
+		source TEXT NOT NULL CHECK(source = 'manual_adjustment'),
+		observed_at TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS allocation_adjustment_latest ON allocation_adjustment_events(profile_id, item_key, observed_at DESC, created_at DESC)`,
 }

@@ -39,6 +39,7 @@ type Decision struct {
 
 func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState, plan domain.TradePlanDraft) Decision {
 	decision := Decision{Savable: true, Findings: make([]Finding, 0)}
+	legacyMode := rule.EffectiveProfileMode() == "legacy"
 	add := func(code, field, message string) {
 		decision.Findings = append(decision.Findings, Finding{Code: code, Severity: SeverityHard, Field: field, Message: message})
 	}
@@ -115,16 +116,18 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 		}
 	}
 	maxShares := 0
-	switch plan.Code {
-	case "0700.HK":
-		maxShares = rule.TencentMaxShares
-	case "9988.HK":
-		maxShares = rule.AlibabaMaxShares
+	if legacyMode {
+		switch plan.Code {
+		case "0700.HK":
+			maxShares = rule.TencentMaxShares
+		case "9988.HK":
+			maxShares = rule.AlibabaMaxShares
+		}
 	}
 	if maxShares > 0 && existingQuantity+plan.Quantity > maxShares {
 		add("INSTRUMENT_SHARE_LIMIT", "quantity", "计划后数量超过当前规则的单一证券上限")
 	}
-	if plan.IsChinaTech && portfolio.ChinaTechUnrealizedPnLFen < 0 && rule.NoCrossInstrumentAveraging {
+	if legacyMode && plan.IsChinaTech && portfolio.ChinaTechUnrealizedPnLFen < 0 && rule.NoCrossInstrumentAveraging {
 		add("NO_CROSS_INSTRUMENT_AVERAGING", "instrumentId", "中国科技仓整体浮亏时禁止新增相关风险")
 	}
 
@@ -142,15 +145,15 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 		MaximumPlannedLossAfterFen: maximumLoss,
 	}
 	if maximumLoss > rule.LossRedLineFen {
-		add("PORTFOLIO_LOSS_RED_LINE", "maxPlanLossFen", "计划后最大损失超过 20,000 元组合红线")
+		add("PORTFOLIO_LOSS_RED_LINE", "maxPlanLossFen", fmt.Sprintf("计划后最大损失超过 %.2f 元组合红线", float64(rule.LossRedLineFen)/100))
 	}
 	if pressureLoss > rule.LossRedLineFen {
-		add("STRESS_LOSS_RED_LINE", "stressDropBP", "计划后压力损失超过 20,000 元组合红线")
+		add("STRESS_LOSS_RED_LINE", "stressDropBP", fmt.Sprintf("计划后压力损失超过 %.2f 元组合红线", float64(rule.LossRedLineFen)/100))
 	}
-	if chinaExposure > rule.ChinaTechLimitFen {
-		add("CHINA_TECH_EXPOSURE_LIMIT", "estimatedCostFen", "计划后中国科技敞口超过 80,000 元")
+	if legacyMode && chinaExposure > rule.ChinaTechLimitFen {
+		add("CHINA_TECH_EXPOSURE_LIMIT", "estimatedCostFen", fmt.Sprintf("计划后中国科技敞口超过 %.2f 元", float64(rule.ChinaTechLimitFen)/100))
 	}
-	if rule.EnforceTencentSequenceGate && plan.Code == "0700.HK" && (portfolio.AlibabaObservationTradingDays < rule.TencentObservationDays || portfolio.DisciplineScoreBP < rule.MinimumDisciplineScoreBP) {
+	if legacyMode && rule.EnforceTencentSequenceGate && plan.Code == "0700.HK" && (portfolio.AlibabaObservationTradingDays < rule.TencentObservationDays || portfolio.DisciplineScoreBP < rule.MinimumDisciplineScoreBP) {
 		add("TENCENT_SEQUENCE_GATE", "instrumentId", fmt.Sprintf("腾讯计划需先完成阿里 %d 个交易日观察且纪律分不低于 %d", rule.TencentObservationDays, rule.MinimumDisciplineScoreBP/100))
 	}
 

@@ -14,6 +14,7 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{ rangeChange: [range: MarketRange] }>()
 
+const aShareLowTurnoverThresholdFen = 200_000_000_000_000
 const turnoverPoints = computed(() => (props.overview?.aShareTurnover ?? []).map(point => ({ date: point.tradeDate, value: point.valueFen })))
 const southboundPoints = computed(() => (props.overview?.southboundNetBuy ?? []).map(point => ({ date: point.tradeDate, value: point.valueFen })))
 const sourceStatus = computed(() => {
@@ -46,12 +47,13 @@ function formatSignedTurnover(valueFen: number) {
       <article class="metric">
         <div class="metric-heading">
           <h3 class="metric-title">沪深A股成交额</h3>
-          <span class="metric-unit">人民币 · 亿元</span>
+          <span class="metric-unit">低于 2 万亿元以绿色标注</span>
         </div>
         <MarketLineChart
           label="沪深A股成交额"
           :points="turnoverPoints"
           :format-value="formatTurnover"
+          :low-threshold="aShareLowTurnoverThresholdFen"
           :loading="loading"
           empty-text="刷新收盘榜单后保存市场成交额"
         />
