@@ -19,6 +19,13 @@ type MonitorResult struct {
 }
 
 func (s *Service) RunMonitorOnce(ctx context.Context) (MonitorResult, error) {
+	profile, err := s.store.UserProfile(ctx)
+	if err != nil {
+		return MonitorResult{}, err
+	}
+	if profile.OnboardingStatus != domain.OnboardingCompleted {
+		return MonitorResult{Status: MonitorStatus{Enabled: false, Interval: "off"}}, nil
+	}
 	now := s.now().UTC()
 	settings, err := s.store.MonitorSettings(ctx)
 	if err != nil {

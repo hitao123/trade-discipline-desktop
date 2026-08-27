@@ -110,7 +110,7 @@ function submit() {
       </label>
       <label class="field">
         <span class="field-heading"><span>数量</span><small>一手 {{ selected?.lotSize ?? 100 }} 股</small></span>
-        <input v-model.number="form.quantity" type="number" :min="selected?.lotSize ?? 1" :step="selected?.lotSize ?? 1" required />
+        <input v-model.number="form.quantity" type="number" min="1" step="1" required />
       </label>
       <label class="field">
         <span class="field-heading"><span>成交均价</span><small>{{ selected?.currency ?? '本币' }}</small></span>

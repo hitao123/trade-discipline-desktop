@@ -1,10 +1,10 @@
-import { copyFile, mkdir, rename, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, shell } from 'electron'
 
 import { processMonitorAlerts, type PendingMonitorNotificationAlert } from './monitor-notifications'
 import { startSidecar, type SidecarHandle } from './sidecar'
@@ -34,6 +34,27 @@ function ocrExecutable() {
     : path.join(app.getAppPath(), 'resources', 'bin', 'plain-rule-ocr')
 }
 
+async function recognizeExecutionImage(filePath: string, name: string) {
+  try {
+    const { stdout } = await execFileAsync(ocrExecutable(), [filePath], {
+      timeout: 15_000,
+      maxBuffer: 2 * 1024 * 1024,
+      encoding: 'utf8',
+    })
+    const payload = JSON.parse(stdout) as { lines?: Array<{ text?: unknown; confidence?: unknown }> }
+    if (!Array.isArray(payload.lines)) throw new Error('识别程序没有返回文字行')
+    const lines = payload.lines
+      .filter(line => typeof line.text === 'string' && typeof line.confidence === 'number')
+      .map(line => ({ text: line.text as string, confidence: line.confidence as number }))
+    if (lines.length === 0) throw new Error('截图中没有识别到文字')
+    return { name, lines }
+  }
+  catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误'
+    throw new Error(`截图识别失败：${message}`)
+  }
+}
+
 async function startBackend() {
   const paths = dataPaths()
   await Promise.all([mkdir(paths.backups, { recursive: true, mode: 0o700 }), mkdir(paths.logs, { recursive: true, mode: 0o700 })])
@@ -57,8 +78,13 @@ async function apiRequest<T>(endpoint: string, body?: unknown): Promise<T> {
   }
   if (body !== undefined) requestInit.body = JSON.stringify(body)
   const response = await fetch(`${sidecar.baseURL}${endpoint}`, requestInit)
-  const envelope = await response.json() as { ok: boolean; data?: T; error?: { message: string } }
-  if (!response.ok || !envelope.ok) throw new Error(envelope.error?.message ?? `本地请求失败（${response.status}）`)
+  const envelope = await response.json() as { ok: boolean; data?: T; error?: { code?: string; message: string } }
+  if (!response.ok || !envelope.ok) {
+    const error = new Error(envelope.error?.message ?? `本地请求失败（${response.status}）`) as Error & { code?: string }
+    if (envelope.error?.code)
+      error.code = envelope.error.code
+    throw error
+  }
   return envelope.data as T
 }
 
@@ -80,7 +106,8 @@ async function pollMonitorNotifications() {
     }, async alertID => apiRequest(`/api/monitor/alerts/${alertID}/notified`, {}))
   }
   catch (error) {
-    console.error('[monitor-notification]', error)
+    if ((error as { code?: string })?.code !== 'ONBOARDING_REQUIRED')
+      console.error('[monitor-notification]', error)
   }
 }
 
@@ -148,23 +175,22 @@ function registerIPC() {
     })
     const filePath = result.filePaths[0]
     if (result.canceled || !filePath) return null
+    return recognizeExecutionImage(filePath, path.basename(filePath))
+  })
+  ipcMain.handle('recognize-execution-clipboard', async () => {
+    const image = clipboard.readImage()
+    if (image.isEmpty()) throw new Error('剪贴板中没有图片，请先截图或复制图片')
+    const png = image.toPNG()
+    if (png.byteLength === 0) throw new Error('剪贴板图片无法读取，请重新截图后再试')
+    if (png.byteLength > 25 * 1024 * 1024) throw new Error('剪贴板图片过大，请裁剪后再识别')
+    const temporaryDirectory = await mkdtemp(path.join(app.getPath('temp'), 'plain-rule-ocr-'))
+    const filePath = path.join(temporaryDirectory, 'clipboard.png')
     try {
-      const { stdout } = await execFileAsync(ocrExecutable(), [filePath], {
-        timeout: 15_000,
-        maxBuffer: 2 * 1024 * 1024,
-        encoding: 'utf8',
-      })
-      const payload = JSON.parse(stdout) as { lines?: Array<{ text?: unknown; confidence?: unknown }> }
-      if (!Array.isArray(payload.lines)) throw new Error('识别程序没有返回文字行')
-      const lines = payload.lines
-        .filter(line => typeof line.text === 'string' && typeof line.confidence === 'number')
-        .map(line => ({ text: line.text as string, confidence: line.confidence as number }))
-      if (lines.length === 0) throw new Error('截图中没有识别到文字')
-      return { name: path.basename(filePath), lines }
+      await writeFile(filePath, png, { mode: 0o600 })
+      return await recognizeExecutionImage(filePath, '剪贴板截图')
     }
-    catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误'
-      throw new Error(`截图识别失败：${message}`)
+    finally {
+      await rm(temporaryDirectory, { recursive: true, force: true })
     }
   })
   ipcMain.handle('select-backup', async () => {

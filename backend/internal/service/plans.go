@@ -101,8 +101,19 @@ func (s *Service) CreateRuleVersion(ctx context.Context, reason string, snapshot
 	if strings.TrimSpace(reason) == "" {
 		return store.RuleVersionRow{}, fmt.Errorf("修改原因不能为空")
 	}
-	if snapshot.InitialCapitalFen != 20_000_000 {
-		return store.RuleVersionRow{}, fmt.Errorf("统一纪律账户初始资金固定为 200,000 元")
+	current, err := s.store.CurrentRule(ctx)
+	if err != nil {
+		return store.RuleVersionRow{}, err
+	}
+	if snapshot.EffectiveProfileMode() != current.EffectiveProfileMode() {
+		return store.RuleVersionRow{}, fmt.Errorf("规则版本不能切换用户模式")
+	}
+	if current.EffectiveProfileMode() == "legacy" && snapshot.InitialCapitalFen != current.InitialCapitalFen {
+		return store.RuleVersionRow{}, fmt.Errorf("历史账户初始资金不能通过规则版本修改")
+	}
+	if current.EffectiveProfileMode() == "generic" &&
+		(snapshot.InitialCapitalFen != current.InitialCapitalFen || snapshot.LossCautionFen != current.LossCautionFen || snapshot.LossRedLineFen != current.LossRedLineFen) {
+		return store.RuleVersionRow{}, fmt.Errorf("总资金和最大损失请通过用户资料修改")
 	}
 	if snapshot.LossRedLineFen <= 0 || snapshot.LossCautionFen <= 0 || snapshot.LossCautionFen >= snapshot.LossRedLineFen {
 		return store.RuleVersionRow{}, fmt.Errorf("损失警戒线必须小于红线且均大于零")

@@ -52,7 +52,7 @@ func (s *Store) ListWatchlist(ctx context.Context) ([]WatchlistRow, error) {
 		return nil, fmt.Errorf("list watchlist: %w", err)
 	}
 	defer rows.Close()
-	var items []WatchlistRow
+	items := make([]WatchlistRow, 0)
 	for rows.Next() {
 		var item WatchlistRow
 		var tech int

@@ -28,4 +28,35 @@ describe('PositionsView', () => {
     await waitFor(() => expect(request).toHaveBeenCalledWith('/api/monitor/alerts/alert-1/reviews', expect.objectContaining({ method: 'POST' })))
     expect(screen.queryByText('已触及风险退出线')).toBeNull()
   })
+
+  it('shows the security name and submits a one-step execution correction', async () => {
+	request.mockImplementation((path: string, init?: RequestInit) => {
+	  if (path === '/api/portfolio') return Promise.resolve({
+		availableCashFen: 19_480_000,
+		positions: {
+		  'sh-515880': { instrumentId: 'sh-515880', code: '515880', name: '通信ETF国泰', market: 'SH', currency: 'CNY', lotSize: 100, quantity: 800, costFen: 52_000, marketValueFen: 52_000, referencePriceMinor: 65, unrealizedPnLFen: 0, realizedPnLFen: 0, isChinaTech: false },
+		},
+		chinaTechExposureFen: 0, cumulativeLossFen: 0, alibabaObservationTradingDays: 0, disciplineScoreBP: 0,
+	  })
+	  if (path === '/api/monitor/status') return Promise.resolve({ enabled: false, interval: 'off' })
+	  if (path === '/api/monitor/alerts') return Promise.resolve([])
+	  if (path === '/api/instruments') return Promise.resolve([{ id: 'sh-515880', market: 'SH', code: '515880', name: '通信ETF国泰', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
+	  if (path === '/api/executions?instrumentId=sh-515880') return Promise.resolve([{ id: 'execution-1', instrumentId: 'sh-515880', code: '515880', name: '通信ETF国泰', side: 'buy', quantity: 800, localPriceMinor: 65, localPriceTenThousandth: 6500, localAmountMinor: 52_000, settlementFen: -52_000, executedAt: '2026-08-24T02:34:21Z', emotion: { fearScore: 2, greedScore: 0, revengeScore: 0 }, quickRecord: true }])
+	  if (path === '/api/executions/execution-1/correct' && init?.method === 'POST') return Promise.resolve({ id: 'execution-2', classification: 'serious_violation', position: { quantity: 80 }, cashFen: 19_948_000, pendingReview: true })
+	  throw new Error(`unexpected ${path}`)
+	})
+
+	render(PositionsView)
+	expect(await screen.findByText('通信ETF国泰')).toBeTruthy()
+	expect(screen.getByText('515880')).toBeTruthy()
+	await fireEvent.click(screen.getByRole('button', { name: '修正成交' }))
+	await fireEvent.click(await screen.findByRole('button', { name: '修正这条' }))
+	await fireEvent.update(screen.getByLabelText('修正后数量'), '80')
+	await fireEvent.update(screen.getByLabelText('修正原因'), '原成交数量录错')
+	await fireEvent.click(screen.getByRole('button', { name: '保存修正' }))
+
+	await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/execution-1/correct', expect.objectContaining({ method: 'POST' })))
+	const call = request.mock.calls.find(([path]) => path === '/api/executions/execution-1/correct')
+	expect(JSON.parse(String(call?.[1]?.body))).toEqual(expect.objectContaining({ reason: '原成交数量录错', draft: expect.objectContaining({ quantity: 80 }) }))
+  })
 })

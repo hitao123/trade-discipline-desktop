@@ -599,7 +599,7 @@ func (s *Service) ConfirmMarketCSV(ctx context.Context, preview market.CSVPrevie
 	}
 	groups := map[market.RankingKind][]market.Quote{
 		market.KindStock: preview.StockTop20,
-		market.KindETF:   preview.ETFTop10,
+		market.KindETF:   preview.ETFTop20,
 	}
 	rows, err := s.store.SaveMarketBatch(ctx, groups, "csv", s.now())
 	if err != nil {

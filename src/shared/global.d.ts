@@ -8,6 +8,7 @@ declare global {
       appVersion: string
       selectCSV: () => Promise<{ name: string; content: string } | null>
       recognizeExecutionScreenshot: () => Promise<{ name: string; lines: Array<{ text: string; confidence: number }> } | null>
+      recognizeExecutionClipboard: () => Promise<{ name: string; lines: Array<{ text: string; confidence: number }> }>
       selectBackup: () => Promise<string | null>
       selectExportPath: () => Promise<string | null>
       exportBackup: () => Promise<string | null>

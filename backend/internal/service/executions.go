@@ -50,42 +50,55 @@ func (s *Service) RecordExecution(ctx context.Context, draft ExecutionDraft) (Ex
 }
 
 func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, quickRecord bool) (ExecutionReceipt, error) {
-	if draft.LocalPriceTenThousandth <= 0 && draft.LocalPriceMinor > 0 {
-		draft.LocalPriceTenThousandth = draft.LocalPriceMinor * 100
-	}
-	if err := validateExecutionEmotion(draft.Emotion); err != nil {
-		return ExecutionReceipt{}, err
-	}
-	code, lotSize, isChinaTech, err := s.store.Instrument(ctx, draft.InstrumentID)
-	if err != nil {
-		return ExecutionReceipt{}, err
-	}
-	if draft.Quantity <= 0 || draft.Quantity%lotSize != 0 {
-		return ExecutionReceipt{}, fmt.Errorf("数量必须是 %d 的正整数倍", lotSize)
-	}
-	if draft.Side != "buy" && draft.Side != "sell" {
-		return ExecutionReceipt{}, fmt.Errorf("买卖方向无效")
-	}
-	if draft.Side == "buy" && draft.SettlementFen >= 0 {
-		return ExecutionReceipt{}, fmt.Errorf("买入实际人民币扣款必须为负数")
-	}
-	if draft.Side == "sell" && draft.SettlementFen <= 0 {
-		return ExecutionReceipt{}, fmt.Errorf("卖出实际人民币到账必须为正数")
-	}
-	if draft.ExecutedAt.IsZero() {
-		draft.ExecutedAt = s.now()
-	}
 	portfolioBefore, err := s.Portfolio(ctx)
 	if err != nil {
 		return ExecutionReceipt{}, err
 	}
-	if draft.Side == "sell" && portfolioBefore.Positions[draft.InstrumentID].Quantity < draft.Quantity {
-		return ExecutionReceipt{}, fmt.Errorf("卖出数量超过本地持仓，请先补齐缺失成交")
-	}
-	rule, err := s.store.CurrentRule(ctx)
+	input, classification, violationCode, err := s.prepareExecution(ctx, draft, quickRecord, portfolioBefore, "")
 	if err != nil {
 		return ExecutionReceipt{}, err
 	}
+	result, err := s.store.AppendExecution(ctx, input)
+	if err != nil {
+		return ExecutionReceipt{}, err
+	}
+	return s.executionReceipt(ctx, result, input, classification, violationCode)
+}
+
+func (s *Service) prepareExecution(ctx context.Context, draft ExecutionDraft, quickRecord bool, portfolioBefore domain.PortfolioState, excludedExecutionID string) (store.AppendExecutionInput, string, string, error) {
+	if draft.LocalPriceTenThousandth <= 0 && draft.LocalPriceMinor > 0 {
+		draft.LocalPriceTenThousandth = draft.LocalPriceMinor * 100
+	}
+	if err := validateExecutionEmotion(draft.Emotion); err != nil {
+		return store.AppendExecutionInput{}, "", "", err
+	}
+	code, _, isChinaTech, err := s.store.Instrument(ctx, draft.InstrumentID)
+	if err != nil {
+		return store.AppendExecutionInput{}, "", "", err
+	}
+	if draft.Quantity <= 0 {
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("成交数量必须大于 0")
+	}
+	if draft.Side != "buy" && draft.Side != "sell" {
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("买卖方向无效")
+	}
+	if draft.Side == "buy" && draft.SettlementFen >= 0 {
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("买入实际人民币扣款必须为负数")
+	}
+	if draft.Side == "sell" && draft.SettlementFen <= 0 {
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("卖出实际人民币到账必须为正数")
+	}
+	if draft.ExecutedAt.IsZero() {
+		draft.ExecutedAt = s.now()
+	}
+	if draft.Side == "sell" && portfolioBefore.Positions[draft.InstrumentID].Quantity < draft.Quantity {
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("卖出数量超过本地持仓，请先补齐缺失成交")
+	}
+	rule, err := s.store.CurrentRule(ctx)
+	if err != nil {
+		return store.AppendExecutionInput{}, "", "", err
+	}
+	legacyMode := rule.EffectiveProfileMode() == "legacy"
 
 	classification := "compliant"
 	violationCode := ""
@@ -100,7 +113,7 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 	} else {
 		plan, err := s.store.Plan(ctx, draft.PlanID)
 		if err != nil {
-			return ExecutionReceipt{}, err
+			return store.AppendExecutionInput{}, "", "", err
 		}
 		switch {
 		case plan.Status != "qualified":
@@ -110,9 +123,9 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 		case draft.ExecutedAt.After(plan.Draft.ValidUntil):
 			markViolation("PLAN_EXPIRED")
 		case draft.Side == "buy":
-			used, err := s.store.ActivePlanExecutionQuantity(ctx, draft.PlanID, domain.ExecutionBuy)
+			used, err := s.store.ActivePlanExecutionQuantityExcluding(ctx, draft.PlanID, domain.ExecutionBuy, excludedExecutionID)
 			if err != nil {
-				return ExecutionReceipt{}, err
+				return store.AppendExecutionInput{}, "", "", err
 			}
 			if used+draft.Quantity > plan.Draft.Quantity {
 				markViolation("PLAN_QUANTITY_EXCEEDED")
@@ -125,11 +138,13 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 	if draft.Side == "buy" {
 		position := portfolioBefore.Positions[draft.InstrumentID]
 		maxShares := 0
-		switch code {
-		case "0700.HK":
-			maxShares = rule.TencentMaxShares
-		case "9988.HK":
-			maxShares = rule.AlibabaMaxShares
+		if legacyMode {
+			switch code {
+			case "0700.HK":
+				maxShares = rule.TencentMaxShares
+			case "9988.HK":
+				maxShares = rule.AlibabaMaxShares
+			}
 		}
 		if maxShares > 0 && position.Quantity+draft.Quantity > maxShares {
 			markViolation("INSTRUMENT_SHARE_LIMIT")
@@ -137,14 +152,14 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 		if rule.NoAddToLosingInstrument && position.Quantity > 0 && position.UnrealizedPnLFen < 0 {
 			markViolation("NO_ADD_TO_LOSER")
 		}
-		if rule.NoCrossInstrumentAveraging && isChinaTech && portfolioBefore.ChinaTechUnrealizedPnLFen < 0 {
+		if legacyMode && rule.NoCrossInstrumentAveraging && isChinaTech && portfolioBefore.ChinaTechUnrealizedPnLFen < 0 {
 			markViolation("NO_CROSS_INSTRUMENT_AVERAGING")
 		}
 		actualCost := -draft.SettlementFen
 		if actualCost > portfolioBefore.AvailableCashFen {
 			markViolation("INSUFFICIENT_CASH")
 		}
-		if isChinaTech && portfolioBefore.ChinaTechExposureFen+actualCost > rule.ChinaTechLimitFen {
+		if legacyMode && isChinaTech && portfolioBefore.ChinaTechExposureFen+actualCost > rule.ChinaTechLimitFen {
 			markViolation("CHINA_TECH_EXPOSURE_LIMIT")
 		}
 		if portfolioBefore.CumulativeLossFen >= rule.LossRedLineFen {
@@ -154,7 +169,7 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 
 	ruleID, err := s.store.CurrentRuleVersionID(ctx)
 	if err != nil {
-		return ExecutionReceipt{}, err
+		return store.AppendExecutionInput{}, "", "", err
 	}
 	event := domain.ExecutionEvent{
 		EventType: domain.ExecutionType(draft.Side), PlanID: draft.PlanID, InstrumentID: draft.InstrumentID,
@@ -163,7 +178,7 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 	}
 	emotionJSON, err := json.Marshal(draft.Emotion)
 	if err != nil {
-		return ExecutionReceipt{}, fmt.Errorf("保存当时情绪失败: %w", err)
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("保存当时情绪失败: %w", err)
 	}
 	input := store.AppendExecutionInput{
 		Event: event, RuleVersionID: ruleID, Classification: classification, ViolationCode: violationCode,
@@ -174,7 +189,16 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 	if violationCode != "" {
 		previousViolations, err := s.store.CountViolations(ctx)
 		if err != nil {
-			return ExecutionReceipt{}, err
+			return store.AppendExecutionInput{}, "", "", err
+		}
+		if excludedExecutionID != "" {
+			active, err := s.store.ExecutionHasActiveViolation(ctx, excludedExecutionID)
+			if err != nil {
+				return store.AppendExecutionInput{}, "", "", err
+			}
+			if active && previousViolations > 0 {
+				previousViolations--
+			}
 		}
 		expectedEnd := addBusinessDays(draft.ExecutedAt, rule.Cooldown.FirstSeriousTradingDays)
 		if previousViolations == 1 {
@@ -188,19 +212,66 @@ func (s *Service) recordExecution(ctx context.Context, draft ExecutionDraft, qui
 			AllowedActions: []string{"record", "reduce", "risk_exit", "review", "simulate_plan"},
 		}
 	}
-	result, err := s.store.AppendExecution(ctx, input)
-	if err != nil {
-		return ExecutionReceipt{}, err
-	}
+	return input, classification, violationCode, nil
+}
+
+func (s *Service) executionReceipt(ctx context.Context, result store.AppendExecutionResult, input store.AppendExecutionInput, classification, violationCode string) (ExecutionReceipt, error) {
 	portfolio, err := s.Portfolio(ctx)
 	if err != nil {
 		return ExecutionReceipt{}, err
 	}
-	receipt := ExecutionReceipt{ID: result.ExecutionID, Classification: classification, ViolationCode: violationCode, Position: portfolio.Positions[draft.InstrumentID], CashFen: portfolio.AvailableCashFen, PendingReview: quickRecord}
+	receipt := ExecutionReceipt{ID: result.ExecutionID, Classification: classification, ViolationCode: violationCode, Position: portfolio.Positions[input.Event.InstrumentID], CashFen: portfolio.AvailableCashFen, PendingReview: input.QuickRecord}
 	if input.Cooldown != nil {
 		receipt.Cooldown = &CooldownReceipt{ID: result.CooldownID, Reason: input.Cooldown.Reason, ExpectedEndsAt: input.Cooldown.ExpectedEndsAt}
 	}
 	return receipt, nil
+}
+
+func (s *Service) ListActiveExecutions(ctx context.Context, instrumentID string) ([]store.ExecutionRecord, error) {
+	return s.store.ListActiveExecutions(ctx, strings.TrimSpace(instrumentID))
+}
+
+func (s *Service) CorrectExecution(ctx context.Context, originalID, reason string, draft ExecutionDraft) (ExecutionReceipt, error) {
+	originalID = strings.TrimSpace(originalID)
+	reason = strings.TrimSpace(reason)
+	if originalID == "" || reason == "" {
+		return ExecutionReceipt{}, fmt.Errorf("请选择成交并填写修正原因")
+	}
+	if draft.LocalPriceTenThousandth <= 0 && draft.LocalPriceMinor <= 0 {
+		return ExecutionReceipt{}, fmt.Errorf("修正后的成交均价必须大于 0")
+	}
+	quickRecord, err := s.store.ExecutionHasPostTradeReview(ctx, originalID)
+	if err != nil {
+		return ExecutionReceipt{}, err
+	}
+	events, err := s.store.LoadExecutions(ctx)
+	if err != nil {
+		return ExecutionReceipt{}, err
+	}
+	found := false
+	for _, event := range events {
+		if event.ID == originalID && event.EventType != domain.ExecutionReversal {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ExecutionReceipt{}, fmt.Errorf("未找到可修正的原成交")
+	}
+	events = append(events, domain.ExecutionEvent{ID: "correction-preview", OriginalEventID: originalID, EventType: domain.ExecutionReversal})
+	portfolioBefore, err := s.portfolioFromEvents(ctx, events)
+	if err != nil {
+		return ExecutionReceipt{}, err
+	}
+	input, classification, violationCode, err := s.prepareExecution(ctx, draft, quickRecord, portfolioBefore, originalID)
+	if err != nil {
+		return ExecutionReceipt{}, err
+	}
+	result, err := s.store.AppendExecutionCorrection(ctx, originalID, input.RuleVersionID, reason, input, s.now())
+	if err != nil {
+		return ExecutionReceipt{}, err
+	}
+	return s.executionReceipt(ctx, result.Replacement, input, classification, violationCode)
 }
 
 func validateExecutionEmotion(emotion ExecutionEmotion) error {
@@ -238,11 +309,19 @@ func (s *Service) Portfolio(ctx context.Context) (domain.PortfolioState, error) 
 	if err != nil {
 		return domain.PortfolioState{}, err
 	}
+	return s.portfolioFromEvents(ctx, events)
+}
+
+func (s *Service) portfolioFromEvents(ctx context.Context, events []domain.ExecutionEvent) (domain.PortfolioState, error) {
 	rule, err := s.store.CurrentRule(ctx)
 	if err != nil {
 		return domain.PortfolioState{}, err
 	}
-	portfolio, err := domain.Replay(rule.InitialCapitalFen, events, nil)
+	initialCashFen, err := s.store.AccountInitialCashFen(ctx)
+	if err != nil {
+		return domain.PortfolioState{}, err
+	}
+	portfolio, err := domain.Replay(initialCashFen, events, nil)
 	if err != nil {
 		return domain.PortfolioState{}, err
 	}
@@ -254,9 +333,19 @@ func (s *Service) Portfolio(ctx context.Context) (domain.PortfolioState, error) 
 	if err != nil {
 		return domain.PortfolioState{}, err
 	}
+	instruments, err := s.store.InstrumentsByID(ctx)
+	if err != nil {
+		return domain.PortfolioState{}, err
+	}
 	portfolio.ChinaTechExposureFen = 0
 	portfolio.ChinaTechUnrealizedPnLFen = 0
 	for id, position := range portfolio.Positions {
+		if instrument, ok := instruments[id]; ok {
+			position.Name = instrument.Name
+			position.Market = instrument.Market
+			position.Currency = instrument.Currency
+			position.LotSize = instrument.LotSize
+		}
 		position.MarketValueFen = position.CostFen
 		if quote, ok := quotes[id]; ok {
 			position.ReferencePriceMinor = quote.PriceMinor

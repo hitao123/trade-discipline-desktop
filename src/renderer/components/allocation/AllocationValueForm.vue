@@ -5,14 +5,14 @@ import { dateTimeLocal } from '@/renderer/lib/format'
 import type { AllocationItemProgress } from '@/renderer/types'
 
 const props = defineProps<{ items: readonly DeepReadonly<AllocationItemProgress>[]; busy: boolean }>()
-const emit = defineEmits<{ recordValue: [payload: { itemKey: string; valueFen: number; observedAt: string }] }>()
+const emit = defineEmits<{ recordAdjustment: [payload: { itemKey: string; adjustmentFen: number; observedAt: string }] }>()
 
 const form = reactive({ itemKey: '', yuan: '', observedAt: dateTimeLocal() })
 const selected = computed(() => props.items.find(item => item.item.key === form.itemKey))
 const localError = computed(() => {
   if (form.yuan === '') return ''
   const value = Number(form.yuan)
-  return Number.isFinite(value) && value >= 0 ? '' : '请输入大于或等于 0 的人民币市值'
+  return Number.isFinite(value) ? '' : '请输入有效的人民币调整金额'
 })
 
 watch(() => props.items, (items) => {
@@ -21,20 +21,20 @@ watch(() => props.items, (items) => {
 
 function submit() {
   if (!form.itemKey || form.yuan === '' || localError.value || !form.observedAt) return
-  emit('recordValue', { itemKey: form.itemKey, valueFen: Math.round(Number(form.yuan) * 100), observedAt: new Date(form.observedAt).toISOString() })
+  emit('recordAdjustment', { itemKey: form.itemKey, adjustmentFen: Math.round(Number(form.yuan) * 100), observedAt: new Date(form.observedAt).toISOString() })
 }
 </script>
 
 <template>
   <section class="value-form-section">
-    <div class="section-heading"><p>手工市值</p><h2>追加一条当前事实</h2><span>不会连券商，也不会下单；旧记录会保留。</span></div>
+    <div class="section-heading"><p>外部调整</p><h2>补充持仓之外的金额</h2><span>持仓和现金已自动同步。这里只记录费用、场外资产等差额，可填正数或负数。</span></div>
     <form class="value-form" @submit.prevent="submit">
       <label class="field"><span>资产项目</span><select v-model="form.itemKey" aria-label="资产项目"><option v-for="progress in items" :key="progress.item.key" :value="progress.item.key">{{ progress.item.name }}</option></select></label>
-      <label class="field"><span>当前市值（元）</span><input v-model="form.yuan" aria-label="当前市值（元）" type="number" min="0" step="0.01" placeholder="例如 12500" /></label>
+      <label class="field"><span>外部调整（元）</span><input v-model="form.yuan" aria-label="外部调整（元）" type="number" step="0.01" placeholder="例如 200 或 -50" /></label>
       <label class="field"><span>记录时间</span><input v-model="form.observedAt" type="datetime-local" /></label>
-      <button class="button button--primary" type="submit" :disabled="busy || !form.itemKey || form.yuan === '' || Boolean(localError)">{{ busy ? '正在保存…' : '保存市值记录' }}</button>
+      <button class="button button--primary" type="submit" :disabled="busy || !form.itemKey || form.yuan === '' || Boolean(localError)">{{ busy ? '正在保存…' : '保存调整' }}</button>
     </form>
-    <p v-if="selected" class="value-form__hint">将记录 {{ selected.item.name }} 的独立市值事实，而非生成交易指令。</p>
+    <p v-if="selected" class="value-form__hint">{{ selected.item.name }} 当前自动值 {{ (selected.linkedValueFen / 100).toLocaleString('zh-CN') }} 元；新调整会替代上一条调整，不会生成交易指令。</p>
     <p v-if="localError" class="value-form__error" role="alert">{{ localError }}</p>
   </section>
 </template>

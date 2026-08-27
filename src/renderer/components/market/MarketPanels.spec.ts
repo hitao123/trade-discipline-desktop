@@ -12,7 +12,10 @@ describe('market history panels', () => {
         loading: false,
         overview: {
           range: '3m',
-          aShareTurnover: [{ tradeDate: '2026-08-11', metric: 'ashare_turnover', valueFen: 150_000_000_000_000, source: 'fixture', sourceTime: '2026-08-11T07:00:00Z' }],
+          aShareTurnover: [
+            { tradeDate: '2026-08-11', metric: 'ashare_turnover', valueFen: 150_000_000_000_000, source: 'fixture', sourceTime: '2026-08-11T07:00:00Z' },
+            { tradeDate: '2026-08-12', metric: 'ashare_turnover', valueFen: 210_000_000_000_000, source: 'fixture', sourceTime: '2026-08-12T07:00:00Z' },
+          ],
           southboundNetBuy: [{ tradeDate: '2026-08-11', metric: 'southbound_net_buy', valueFen: -7_000_000_000, source: 'fixture', sourceTime: '2026-08-11T08:00:00Z' }],
           lastSuccessfulAt: '2026-08-12T08:00:00Z',
           cached: true,
@@ -24,6 +27,9 @@ describe('market history panels', () => {
     expect(screen.getByText('沪深A股成交额')).toBeTruthy()
     expect(screen.getByText('南向资金成交净买额')).toBeTruthy()
     expect(screen.getAllByText(/正在显示本地缓存/).length).toBeGreaterThan(0)
+    expect(screen.getByText('低于 2 万亿元以绿色标注')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /2026-08-11.*15000.00 亿/ }).classList.contains('chart-point--low')).toBe(true)
+    expect(screen.getByRole('button', { name: /2026-08-12.*21000.00 亿/ }).classList.contains('chart-point--low')).toBe(false)
     expect(screen.getByRole('button', { name: /2026-08-11.*-0.70 亿/ })).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: '近 1 个月' }))
     expect(view.emitted().rangeChange).toEqual([['1m']])

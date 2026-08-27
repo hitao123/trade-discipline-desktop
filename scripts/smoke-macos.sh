@@ -32,19 +32,23 @@ fi
 integrity="$(sqlite3 "$database" 'PRAGMA integrity_check;')"
 account_count="$(sqlite3 "$database" 'SELECT count(*) FROM accounts;')"
 rule_count="$(sqlite3 "$database" 'SELECT count(*) FROM rule_versions;')"
+instrument_count="$(sqlite3 "$database" 'SELECT count(*) FROM instruments;')"
+allocation_count="$(sqlite3 "$database" 'SELECT count(*) FROM allocation_profiles;')"
+profile_mode="$(sqlite3 "$database" "SELECT mode FROM user_profiles WHERE id='local-user';")"
+onboarding_status="$(sqlite3 "$database" "SELECT onboarding_status FROM user_profiles WHERE id='local-user';")"
 schema_version="$(sqlite3 "$database" 'SELECT max(version) FROM schema_migrations;')"
 history_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('market_daily_bar_observations','market_metric_observations');")"
 discipline_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('pre_trade_confirmations','price_alert_events','position_review_events');")"
-allocation_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('allocation_profiles','allocation_versions','allocation_value_events');")"
+allocation_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('allocation_profiles','allocation_versions','allocation_value_events','allocation_adjustment_events');")"
 refresh_status_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='market_refresh_status';")"
 health_column_count="$(sqlite3 "$database" "SELECT count(*) FROM pragma_table_info('market_refresh_status') WHERE name='health_json';")"
-post_trade_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('post_trade_reviews','execution_fx_observations');")"
+post_trade_table_count="$(sqlite3 "$database" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('post_trade_reviews','execution_fx_observations','execution_corrections');")"
 precise_price_column_count="$(sqlite3 "$database" "SELECT count(*) FROM pragma_table_info('execution_events') WHERE name='local_price_ten_thousandth';")"
 kill -TERM "$app_pid" 2>/dev/null || true
 wait "$app_pid" 2>/dev/null || true
 
-if [[ "$integrity" != "ok" || "$account_count" != "1" || "$rule_count" != "1" || "$schema_version" != "8" || "$history_table_count" != "2" || "$discipline_table_count" != "3" || "$allocation_table_count" != "3" || "$refresh_status_table_count" != "1" || "$health_column_count" != "1" || "$post_trade_table_count" != "2" || "$precise_price_column_count" != "1" ]]; then
-	print -u2 "首启数据库校验失败：integrity=$integrity account=$account_count rule=$rule_count schema=$schema_version history_tables=$history_table_count discipline_tables=$discipline_table_count allocation_tables=$allocation_table_count refresh_status_tables=$refresh_status_table_count health_columns=$health_column_count post_trade_tables=$post_trade_table_count precise_price_columns=$precise_price_column_count"
+if [[ "$integrity" != "ok" || "$profile_mode" != "generic" || "$onboarding_status" != "pending" || "$account_count" != "0" || "$rule_count" != "0" || "$instrument_count" != "0" || "$allocation_count" != "0" || "$schema_version" != "11" || "$history_table_count" != "2" || "$discipline_table_count" != "3" || "$allocation_table_count" != "4" || "$refresh_status_table_count" != "1" || "$health_column_count" != "1" || "$post_trade_table_count" != "3" || "$precise_price_column_count" != "1" ]]; then
+	print -u2 "首启数据库校验失败：integrity=$integrity profile=$profile_mode onboarding=$onboarding_status account=$account_count rule=$rule_count instrument=$instrument_count allocation=$allocation_count schema=$schema_version"
   exit 1
 fi
 

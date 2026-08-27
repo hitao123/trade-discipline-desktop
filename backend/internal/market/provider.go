@@ -10,6 +10,9 @@ type RankingKind string
 const (
 	KindStock RankingKind = "stock"
 	KindETF   RankingKind = "etf"
+
+	StockRankingLimit = 20
+	ETFRankingLimit   = 20
 )
 
 type SnapshotMode string

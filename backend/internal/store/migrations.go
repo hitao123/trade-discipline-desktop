@@ -14,6 +14,17 @@ var migrationStatements = []string{
 		status TEXT NOT NULL CHECK(status IN ('active','inactive'))
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS one_active_account ON accounts(status) WHERE status = 'active'`,
+	`CREATE TABLE IF NOT EXISTS user_profiles (
+		id TEXT PRIMARY KEY CHECK(id='local-user'),
+		mode TEXT NOT NULL CHECK(mode IN ('legacy','generic')),
+		onboarding_status TEXT NOT NULL CHECK(onboarding_status IN ('pending','completed')),
+		investable_capital_fen INTEGER,
+		max_loss_fen INTEGER,
+		holding_horizon TEXT,
+		enabled_markets_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(enabled_markets_json)),
+		completed_at TEXT,
+		updated_at TEXT NOT NULL
+	)`,
 	`CREATE TABLE IF NOT EXISTS rule_versions (
 		id TEXT PRIMARY KEY,
 		version INTEGER NOT NULL UNIQUE,
@@ -191,12 +202,21 @@ var migrationStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS cooldown_periods (
 		id TEXT PRIMARY KEY,
+		execution_id TEXT REFERENCES execution_events(id),
 		reason TEXT NOT NULL,
 		severity TEXT NOT NULL,
 		starts_at TEXT NOT NULL,
 		expected_ends_at TEXT NOT NULL,
 		actual_ends_at TEXT,
 		allowed_actions_json TEXT NOT NULL CHECK(json_valid(allowed_actions_json))
+	)`,
+	`CREATE TABLE IF NOT EXISTS execution_corrections (
+		id TEXT PRIMARY KEY,
+		original_execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		reversal_execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		replacement_execution_id TEXT NOT NULL UNIQUE REFERENCES execution_events(id),
+		reason TEXT NOT NULL,
+		created_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS weekly_reviews (
 		id TEXT PRIMARY KEY,
@@ -278,4 +298,14 @@ var migrationStatements = []string{
 		created_at TEXT NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS allocation_value_latest ON allocation_value_events(profile_id, item_key, observed_at DESC, created_at DESC)`,
+	`CREATE TABLE IF NOT EXISTS allocation_adjustment_events (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL REFERENCES allocation_profiles(id),
+		item_key TEXT NOT NULL,
+		adjustment_fen INTEGER NOT NULL,
+		source TEXT NOT NULL CHECK(source = 'manual_adjustment'),
+		observed_at TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS allocation_adjustment_latest ON allocation_adjustment_events(profile_id, item_key, observed_at DESC, created_at DESC)`,
 }

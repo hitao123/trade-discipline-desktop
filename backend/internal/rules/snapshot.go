@@ -9,6 +9,7 @@ type CooldownRule struct {
 
 type Snapshot struct {
 	Version                    int          `json:"version"`
+	ProfileMode                string       `json:"profileMode,omitempty"`
 	InitialCapitalFen          int64        `json:"initialCapitalFen"`
 	LossCautionFen             int64        `json:"lossCautionFen"`
 	LossRedLineFen             int64        `json:"lossRedLineFen"`
@@ -24,6 +25,27 @@ type Snapshot struct {
 	NoCrossInstrumentAveraging bool         `json:"noCrossInstrumentAveraging"`
 	ExitCodes                  []string     `json:"exitCodes"`
 	Cooldown                   CooldownRule `json:"cooldown"`
+}
+
+func (s Snapshot) EffectiveProfileMode() string {
+	if s.ProfileMode == "generic" {
+		return "generic"
+	}
+	return "legacy"
+}
+
+func GenericSnapshot(capitalFen, maxLossFen int64) Snapshot {
+	snapshot := InitialSnapshot()
+	snapshot.ProfileMode = "generic"
+	snapshot.InitialCapitalFen = capitalFen
+	snapshot.LossCautionFen = maxLossFen * 75 / 100
+	snapshot.LossRedLineFen = maxLossFen
+	snapshot.ChinaTechLimitFen = 0
+	snapshot.TencentMaxShares = 0
+	snapshot.AlibabaMaxShares = 0
+	snapshot.EnforceTencentSequenceGate = false
+	snapshot.NoCrossInstrumentAveraging = false
+	return snapshot
 }
 
 func InitialSnapshot() Snapshot {

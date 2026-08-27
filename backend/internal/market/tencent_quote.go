@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 const defaultTencentQuoteURL = "https://qt.gtimg.cn/"
@@ -70,6 +73,12 @@ func (p TencentQuoteProvider) FetchQuotes(ctx context.Context, keys []Instrument
 	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read Tencent quote response: %w", err)
+	}
+	if !utf8.Valid(body) {
+		body, err = simplifiedchinese.GB18030.NewDecoder().Bytes(body)
+		if err != nil {
+			return nil, fmt.Errorf("decode Tencent quote response: %w", err)
+		}
 	}
 	quotes := make([]Quote, 0, len(keys))
 	location, _ := time.LoadLocation("Asia/Shanghai")

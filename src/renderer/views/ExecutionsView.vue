@@ -2,6 +2,8 @@
 import { onMounted, shallowRef } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
+import ExecutionCorrectionPanel from '@/renderer/components/executions/ExecutionCorrectionPanel.vue'
+import ExecutionHistory from '@/renderer/components/executions/ExecutionHistory.vue'
 import ExecutionForm from '@/renderer/components/executions/ExecutionForm.vue'
 import ExecutionScreenshotImport from '@/renderer/components/executions/ExecutionScreenshotImport.vue'
 import QuickExecutionForm from '@/renderer/components/executions/QuickExecutionForm.vue'
@@ -9,7 +11,7 @@ import PageHeader from '@/renderer/components/PageHeader.vue'
 import { api } from '@/renderer/lib/api'
 import { formatCNY } from '@/renderer/lib/format'
 import type { ExecutionScreenshotPrefill } from '@/renderer/lib/execution-screenshot'
-import type { Instrument, PlanRecord, Position } from '@/renderer/types'
+import type { ExecutionRecord, Instrument, PlanRecord, Position } from '@/renderer/types'
 
 interface Receipt { id: string; classification: string; violationCode?: string; position: Position; cashFen: number; pendingReview?: boolean; cooldown?: { expectedEndsAt: string } }
 
@@ -21,24 +23,69 @@ const error = shallowRef('')
 const reversalReason = shallowRef('')
 const entryMode = shallowRef<'quick' | 'full'>('quick')
 const screenshotPrefill = shallowRef<ExecutionScreenshotPrefill>()
+const executionRecords = shallowRef<ExecutionRecord[]>([])
+const selectedExecution = shallowRef<ExecutionRecord>()
+
+async function loadActiveExecutions() {
+  try {
+    return await api.request<ExecutionRecord[]>('/api/executions')
+  }
+  catch {
+    return []
+  }
+}
 
 async function load() {
   try {
-    [instruments.value, plans.value] = await Promise.all([api.request<Instrument[]>('/api/instruments'), api.request<PlanRecord[]>('/api/plans')])
+    const [loadedInstruments, loadedPlans, loadedExecutions] = await Promise.all([
+      api.request<Instrument[]>('/api/instruments'),
+      api.request<PlanRecord[]>('/api/plans'),
+      loadActiveExecutions(),
+    ])
+    instruments.value = loadedInstruments
+    plans.value = loadedPlans
+    executionRecords.value = loadedExecutions
+    void repairCorruptedInstrumentNames(loadedInstruments)
   }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '成交页加载失败' }
 }
 
+function includeResolvedInstrument(instrument: Instrument) {
+  const exists = instruments.value.some(item => item.id === instrument.id)
+  instruments.value = exists
+    ? instruments.value.map(item => item.id === instrument.id ? instrument : item)
+    : [...instruments.value, instrument]
+}
+
+async function repairCorruptedInstrumentNames(items: Instrument[]) {
+  for (const instrument of items) {
+    if (!instrument.name.includes('\uFFFD')) continue
+    try {
+      const repaired = await api.request<Instrument>('/api/instruments/resolve', { method: 'POST', body: JSON.stringify({ code: instrument.code }) })
+      includeResolvedInstrument(repaired)
+    }
+    catch {
+      // Keep the existing instrument available when public quote sources are temporarily unavailable.
+    }
+  }
+}
+
 async function record(payload: Record<string, unknown>) {
   busy.value = true; error.value = ''
-  try { receipt.value = await api.request<Receipt>('/api/executions', { method: 'POST', body: JSON.stringify(payload) }) }
+  try {
+    receipt.value = await api.request<Receipt>('/api/executions', { method: 'POST', body: JSON.stringify(payload) })
+    executionRecords.value = await loadActiveExecutions()
+  }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '成交记录失败' }
   finally { busy.value = false }
 }
 
 async function recordQuick(payload: Record<string, unknown>) {
   busy.value = true; error.value = ''
-  try { receipt.value = await api.request<Receipt>('/api/executions/quick', { method: 'POST', body: JSON.stringify(payload) }) }
+  try {
+    receipt.value = await api.request<Receipt>('/api/executions/quick', { method: 'POST', body: JSON.stringify(payload) })
+    executionRecords.value = await loadActiveExecutions()
+  }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '极速补录失败' }
   finally { busy.value = false }
 }
@@ -54,6 +101,25 @@ async function reverse() {
   finally { busy.value = false }
 }
 
+async function correctExecution(payload: { originalId: string; reason: string; draft: Record<string, unknown> }) {
+  busy.value = true
+  error.value = ''
+  try {
+    receipt.value = await api.request<Receipt>(`/api/executions/${payload.originalId}/correct`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: payload.reason, draft: payload.draft }),
+    })
+    executionRecords.value = await loadActiveExecutions()
+    selectedExecution.value = undefined
+  }
+  catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '成交修正失败'
+  }
+  finally {
+    busy.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -67,7 +133,7 @@ onMounted(load)
 	</div>
     <div class="execution-layout">
 	  <div v-if="entryMode === 'quick'" class="quick-entry">
-        <ExecutionScreenshotImport :instruments="instruments" @prefill="screenshotPrefill = $event" />
+        <ExecutionScreenshotImport :instruments="instruments" @instrument-resolved="includeResolvedInstrument" @prefill="screenshotPrefill = $event" />
         <QuickExecutionForm :instruments="instruments" :plans="plans" :busy="busy" :prefill="screenshotPrefill" @submit="recordQuick" />
       </div>
       <ExecutionForm v-else :instruments="instruments" :plans="plans" :busy="busy" @submit="record" />
@@ -80,6 +146,10 @@ onMounted(load)
         <div v-if="receipt.classification !== 'reversed'" class="reversal-box"><label class="field"><span>若本次录错，填写冲正原因</span><input v-model="reversalReason" placeholder="不会删除原记录" /></label><button class="button" type="button" :disabled="busy || !reversalReason.trim()" @click="reverse">追加冲正</button></div>
       </aside>
     </div>
+    <section class="correction-section" aria-label="近期成交修正">
+      <ExecutionHistory :records="executionRecords" :busy="busy" @select="selectedExecution = $event" />
+      <ExecutionCorrectionPanel :record="selectedExecution" :instruments="instruments" :busy="busy" @submit="correctExecution" @cancel="selectedExecution = undefined" />
+    </section>
   </div>
 </template>
 
@@ -97,4 +167,5 @@ onMounted(load)
 .receipt dt { color: var(--ink-muted); }.receipt dd { margin: 0; font-weight: 650; }
 .violation-code { color: var(--accent) !important; font-size: 11px; letter-spacing: .04em !important; }.reversal-box { display: grid; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }.reversal-box .field { margin: 0; }
 .pending-review { margin-top: 12px !important; color: #8a6a32 !important; letter-spacing: 0 !important; }
+.correction-section { display: grid; gap: 14px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
 </style>

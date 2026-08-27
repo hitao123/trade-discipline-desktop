@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, shallowRef } from 'vue'
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import PostTradeReviewQueue from '@/renderer/components/reviews/PostTradeReviewQueue.vue'
+import { useOptionalUserProfile } from '@/renderer/composables/useUserProfile'
 import { api } from '@/renderer/lib/api'
 import { dateLocal, formatCNY } from '@/renderer/lib/format'
 import type { Instrument, PostTradeReview } from '@/renderer/types'
@@ -16,6 +17,8 @@ const pendingReviews = shallowRef<PostTradeReview[]>([])
 const instruments = shallowRef<Instrument[]>([])
 const busyExecutionId = shallowRef('')
 const instrumentNames = computed(() => Object.fromEntries(instruments.value.map(instrument => [instrument.id, `${instrument.code} · ${instrument.name}`])))
+const userProfile = useOptionalUserProfile()
+const genericMode = computed(() => userProfile?.profile.value?.mode === 'generic')
 async function load() { try { review.value = await api.request<Review | null>('/api/reviews/current') ?? undefined } catch (cause) { error.value = cause instanceof Error ? cause.message : '复盘加载失败' } }
 async function loadPending() {
   try {
@@ -51,8 +54,8 @@ onMounted(() => Promise.all([load(), loadPending(), loadInstruments()]))
     <ErrorNotice :message="error" />
     <PostTradeReviewQueue :reviews="pendingReviews" :instrument-names="instrumentNames" :busy-execution-id="busyExecutionId" @complete="completePostTradeReview" />
     <div class="review-layout">
-      <form class="form-stack" @submit.prevent="submit"><div class="field-grid"><label class="field"><span>周期开始</span><input v-model="form.periodStart" type="date" required @change="loadPending" /></label><label class="field"><span>周期结束</span><input v-model="form.periodEnd" type="date" required @change="loadPending" /></label></div><label class="field"><span>冲动与纪律记录</span><textarea v-model="form.impulseNotes" rows="7" placeholder="写事实：当时想做什么，最后按什么规则处理？" /></label><label class="field"><span>下周唯一允许动作</span><textarea v-model="form.nextAllowedAction" rows="3" required placeholder="例如：只跟踪阿里云收入证据，不新增中国科技仓位" /></label><p v-if="pendingReviews.length" class="pending-gate">请先完成上方 {{ pendingReviews.length }} 笔成交复盘，再提交本周复盘。</p><button class="button button--primary" type="submit" :disabled="busy || pendingReviews.length > 0">{{ busy ? '提交中…' : pendingReviews.length ? '先完成成交复盘' : '提交每周复盘' }}</button></form>
-      <aside class="score-panel"><p>最近一次复盘</p><template v-if="review"><strong>{{ (review.disciplineScoreBP / 100).toFixed(0) }}</strong><span>纪律得分</span><dl><div><dt>现金</dt><dd>{{ formatCNY(review.metrics.cashFen) }}</dd></div><div><dt>中国科技敞口</dt><dd>{{ formatCNY(review.metrics.chinaTechExposureFen) }}</dd></div><div><dt>违规次数</dt><dd>{{ review.metrics.violationCount }}</dd></div></dl><blockquote>{{ review.userContent.nextAllowedAction }}</blockquote></template><span v-else>尚未提交复盘</span></aside>
+      <form class="form-stack" @submit.prevent="submit"><div class="field-grid"><label class="field"><span>周期开始</span><input v-model="form.periodStart" type="date" required @change="loadPending" /></label><label class="field"><span>周期结束</span><input v-model="form.periodEnd" type="date" required @change="loadPending" /></label></div><label class="field"><span>冲动与纪律记录</span><textarea v-model="form.impulseNotes" rows="7" placeholder="写事实：当时想做什么，最后按什么规则处理？" /></label><label class="field"><span>下周唯一允许动作</span><textarea v-model="form.nextAllowedAction" rows="3" required placeholder="例如：只跟踪一项可验证证据，不因短期涨跌临时加仓" /></label><p v-if="pendingReviews.length" class="pending-gate">请先完成上方 {{ pendingReviews.length }} 笔成交复盘，再提交本周复盘。</p><button class="button button--primary" type="submit" :disabled="busy || pendingReviews.length > 0">{{ busy ? '提交中…' : pendingReviews.length ? '先完成成交复盘' : '提交每周复盘' }}</button></form>
+      <aside class="score-panel"><p>最近一次复盘</p><template v-if="review"><strong>{{ (review.disciplineScoreBP / 100).toFixed(0) }}</strong><span>纪律得分</span><dl><div><dt>现金</dt><dd>{{ formatCNY(review.metrics.cashFen) }}</dd></div><div v-if="!genericMode"><dt>中国科技敞口</dt><dd>{{ formatCNY(review.metrics.chinaTechExposureFen) }}</dd></div><div><dt>违规次数</dt><dd>{{ review.metrics.violationCount }}</dd></div></dl><blockquote>{{ review.userContent.nextAllowedAction }}</blockquote></template><span v-else>尚未提交复盘</span></aside>
     </div>
   </div>
 </template>

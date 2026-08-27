@@ -12,6 +12,7 @@ import (
 
 	"github.com/local/trade-discipline-desktop/backend/internal/domain"
 	"github.com/local/trade-discipline-desktop/backend/internal/market"
+	"github.com/local/trade-discipline-desktop/backend/internal/rules"
 	"github.com/local/trade-discipline-desktop/backend/internal/service"
 	"github.com/local/trade-discipline-desktop/backend/internal/store"
 )
@@ -26,14 +27,56 @@ func newAPIServer(t *testing.T) *httptest.Server {
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	seedLegacyAPITestData(t, db)
 	now := func() time.Time { return time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC) }
 	server := httptest.NewServer(NewRouter(service.New(db, now), "secret"))
 	t.Cleanup(server.Close)
 	return server
 }
 
+func seedLegacyAPITestData(t *testing.T, db *store.Store) {
+	t.Helper()
+	stamp := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	raw, err := json.Marshal(rules.InitialSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`UPDATE user_profiles SET mode='legacy', onboarding_status='completed', investable_capital_fen=20000000, max_loss_fen=2000000, holding_horizon='legacy_unspecified', enabled_markets_json='["ashare_stock","ashare_etf","hk"]', completed_at=?, updated_at=? WHERE id='local-user'`, []any{stamp, stamp}},
+		{`INSERT INTO accounts(id, name, base_currency, initial_capital_fen, enabled_at, status) VALUES('account-main','我的纪律账户','CNY',20000000,?,'active')`, []any{stamp}},
+		{`INSERT INTO rule_versions(id, version, snapshot_json, change_reason, created_at, previous_id) VALUES('rule-1',1,?,'初始交易纪律规则',?,NULL)`, []any{string(raw), stamp}},
+		{`INSERT INTO instruments(id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status) VALUES('hk-0700','HK','0700.HK','腾讯控股','stock','HKD',100,'legacy_fixture',1,0,'active')`, nil},
+		{`INSERT INTO instruments(id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status) VALUES('hk-9988','HK','9988.HK','阿里巴巴-W','stock','HKD',100,'legacy_fixture',1,0,'active')`, nil},
+	}
+	for _, statement := range statements {
+		if _, err := db.DB().Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func newFreshAPIServer(t *testing.T) (*httptest.Server, *store.Store) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "discipline.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 25, 8, 0, 0, 0, time.UTC) }
+	server := httptest.NewServer(NewRouter(service.New(db, now), "secret"))
+	t.Cleanup(server.Close)
+	return server, db
+}
+
 type apiMarketProvider struct {
-	daily []market.DailyBar
+	daily  []market.DailyBar
+	quotes []market.Quote
 }
 
 func (p apiMarketProvider) FetchRankings(_ context.Context, _ market.RankingKind) ([]market.Quote, error) {
@@ -41,7 +84,7 @@ func (p apiMarketProvider) FetchRankings(_ context.Context, _ market.RankingKind
 }
 
 func (p apiMarketProvider) FetchQuotes(_ context.Context, _ []market.InstrumentKey) ([]market.Quote, error) {
-	return nil, nil
+	return p.quotes, nil
 }
 
 func (p apiMarketProvider) FetchDailyBars(_ context.Context, _ market.InstrumentKey, _ int) ([]market.DailyBar, error) {
@@ -62,6 +105,7 @@ func newMarketAPIServer(t *testing.T, provider market.Provider) (*httptest.Serve
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	seedLegacyAPITestData(t, db)
 	now := func() time.Time { return time.Date(2026, 8, 12, 8, 30, 0, 0, time.UTC) }
 	svc := service.New(db, now)
 	svc.SetMarketProvider(provider)
@@ -81,6 +125,166 @@ func authorizedRequest(t *testing.T, method, endpoint string, body []byte) *http
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req
+}
+
+func TestOnboardingAPICompletesFreshAccountOnce(t *testing.T) {
+	server, db := newFreshAPIServer(t)
+
+	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/onboarding", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending struct {
+		Data domain.UserProfile `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || pending.Data.Mode != domain.UserModeGeneric || pending.Data.OnboardingStatus != domain.OnboardingPending {
+		t.Fatalf("status=%d profile=%#v", response.StatusCode, pending.Data)
+	}
+
+	invalidBody := []byte(`{"investableCapitalFen":20000000,"maxLossFen":20000000,"holdingHorizon":"6_to_12m","enabledMarkets":["ashare_etf"]}`)
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/onboarding/complete", invalidBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invalid Envelope[any]
+	if err := json.NewDecoder(response.Body).Decode(&invalid); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnprocessableEntity || invalid.Error == nil || invalid.Error.Code != "INVALID_ONBOARDING" {
+		t.Fatalf("status=%d body=%#v", response.StatusCode, invalid)
+	}
+
+	validBody := []byte(`{"investableCapitalFen":20000000,"maxLossFen":2000000,"holdingHorizon":"6_to_12m","enabledMarkets":["ashare_etf","hk"]}`)
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/onboarding/complete", validBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var completed struct {
+		Data domain.UserProfile `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&completed); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated || completed.Data.OnboardingStatus != domain.OnboardingCompleted || completed.Data.MaxLossFen != 2_000_000 {
+		t.Fatalf("status=%d profile=%#v", response.StatusCode, completed.Data)
+	}
+	for table, want := range map[string]int{"accounts": 1, "rule_versions": 1, "instruments": 0, "allocation_profiles": 0} {
+		var got int
+		if err := db.DB().QueryRow("SELECT count(*) FROM " + table).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("%s=%d want=%d", table, got, want)
+		}
+	}
+
+	response, err = server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/onboarding/complete", validBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var conflict Envelope[any]
+	if err := json.NewDecoder(response.Body).Decode(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusConflict || conflict.Error == nil || conflict.Error.Code != "ONBOARDING_ALREADY_COMPLETED" {
+		t.Fatalf("status=%d body=%#v", response.StatusCode, conflict)
+	}
+}
+
+func TestFreshWorkspaceListAPIsReturnEmptyArrays(t *testing.T) {
+	server, _ := newFreshAPIServer(t)
+	completed, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/onboarding/complete", []byte(`{"investableCapitalFen":20000000,"maxLossFen":2000000,"holdingHorizon":"6_to_12m","enabledMarkets":["ashare_etf"]}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed.Body.Close()
+	if completed.StatusCode != http.StatusCreated {
+		t.Fatalf("complete onboarding status=%d", completed.StatusCode)
+	}
+
+	for _, endpoint := range []string{"/api/instruments", "/api/watchlist", "/api/plans", "/api/executions"} {
+		response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+endpoint, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || string(envelope.Data) != "[]" {
+			t.Fatalf("%s status=%d data=%s, want []", endpoint, response.StatusCode, envelope.Data)
+		}
+	}
+}
+
+func TestResolveInstrumentAPIAddsValidAShareETFOnce(t *testing.T) {
+	provider := apiMarketProvider{quotes: []market.Quote{{
+		TradeDate: "2026-08-25", Market: "SZ", Code: "159361", Name: "A500ETF易方达",
+		AssetType: market.KindStock, CloseMinor: 122, Source: "fixture-quote", SourceTime: time.Date(2026, 8, 25, 7, 0, 0, 0, time.UTC),
+	}}}
+	server, db := newMarketAPIServer(t, provider)
+
+	resolve := func() store.InstrumentRow {
+		t.Helper()
+		response, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/instruments/resolve", []byte(`{"code":"159361"}`)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK {
+			response.Body.Close()
+			t.Fatalf("resolve status=%d", response.StatusCode)
+		}
+		var result struct {
+			Data store.InstrumentRow `json:"data"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || result.Data.Market != "SZ" || result.Data.Code != "159361" || result.Data.AssetType != "etf" || result.Data.LotSize != 100 {
+			t.Fatalf("status=%d instrument=%#v", response.StatusCode, result.Data)
+		}
+		return result.Data
+	}
+
+	if got := resolve(); got.Name != "A500ETF易方达" {
+		t.Fatalf("created name=%q", got.Name)
+	}
+	if _, err := db.DB().Exec(`UPDATE instruments SET name='A500ETF� ���' WHERE market='SZ' AND code='159361'`); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolve(); got.Name != "A500ETF易方达" {
+		t.Fatalf("repaired name=%q", got.Name)
+	}
+
+	var instrumentCount, createAuditCount, repairAuditCount int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM instruments WHERE market='SZ' AND code='159361'`).Scan(&instrumentCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE entity_type='instrument' AND action='resolved_from_public_quote'`).Scan(&createAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE entity_type='instrument' AND action='resolved_instrument_name_repaired'`).Scan(&repairAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if instrumentCount != 1 || createAuditCount != 1 || repairAuditCount != 1 {
+		t.Fatalf("instrumentCount=%d createAuditCount=%d repairAuditCount=%d", instrumentCount, createAuditCount, repairAuditCount)
+	}
 }
 
 func TestDashboardCooldownUsesFrontendJSONContract(t *testing.T) {
@@ -171,7 +375,7 @@ func TestQuickExecutionAndPostTradeReviewAPI(t *testing.T) {
 	}
 }
 
-func TestAllocationAPITracksGoalAndAppendsManualValues(t *testing.T) {
+func TestAllocationAPITracksGoalAndAppendsManualAdjustments(t *testing.T) {
 	server := newAPIServer(t)
 	response, err := server.Client().Do(authorizedRequest(t, http.MethodGet, server.URL+"/api/allocation", nil))
 	if err != nil {
@@ -182,17 +386,17 @@ func TestAllocationAPITracksGoalAndAppendsManualValues(t *testing.T) {
 		t.Fatalf("allocation status=%d", response.StatusCode)
 	}
 	var initial struct {
-		OK   bool                       `json:"ok"`
-		Data service.AllocationOverview `json:"data"`
+		OK   bool                   `json:"ok"`
+		Data domain.AllocationState `json:"data"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&initial); err != nil {
 		t.Fatal(err)
 	}
-	if !initial.OK || initial.Data.CurrentTotalFen != 20_000_000 || initial.Data.TargetTotalFen != 22_000_000 || initial.Data.ReturnBP != 0 {
+	if !initial.OK || initial.Data.Overview == nil || initial.Data.Overview.CurrentTotalFen != 20_000_000 || initial.Data.Overview.TargetTotalFen != 22_000_000 || initial.Data.Overview.ReturnBP != 0 {
 		t.Fatalf("unexpected allocation overview: %#v", initial.Data)
 	}
 
-	recorded, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/allocation/items/semiconductor-equipment-etf-159558/value-events", []byte(`{"valueFen":1250000,"observedAt":"2026-08-12T08:00:00Z"}`)))
+	recorded, err := server.Client().Do(authorizedRequest(t, http.MethodPost, server.URL+"/api/allocation/items/semiconductor-equipment-etf-159558/adjustments", []byte(`{"adjustmentFen":250000,"observedAt":"2026-08-12T08:00:00Z"}`)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,12 +411,12 @@ func TestAllocationAPITracksGoalAndAppendsManualValues(t *testing.T) {
 	}
 	defer response.Body.Close()
 	var updated struct {
-		Data service.AllocationOverview `json:"data"`
+		Data domain.AllocationState `json:"data"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.Data.CurrentTotalFen != 20_250_000 || updated.Data.ReturnBP != 125 || updated.Data.GoalGapFen != 1_750_000 {
+	if updated.Data.Overview == nil || updated.Data.Overview.CurrentTotalFen != 20_250_000 || updated.Data.Overview.ReturnBP != 125 || updated.Data.Overview.GoalGapFen != 1_750_000 {
 		t.Fatalf("unexpected updated allocation overview: %#v", updated.Data)
 	}
 }

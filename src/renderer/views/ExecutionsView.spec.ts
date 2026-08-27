@@ -27,6 +27,16 @@ describe('ExecutionsView', () => {
             { text: '2026-08-24 10:34:21', confidence: 1 },
           ],
         }),
+        recognizeExecutionClipboard: vi.fn().mockResolvedValue({
+          name: '剪贴板截图',
+          lines: [
+            { text: '515880', confidence: 1 },
+            { text: '通信ETF国泰', confidence: 0.9 },
+            { text: '买入，委托数量8000股', confidence: 1 },
+            { text: '5,216.00元（成交价格：0.652元）', confidence: 0.9 },
+            { text: '2026-08-24 10:34:21', confidence: 1 },
+          ],
+        }),
       },
     })
   })
@@ -36,6 +46,20 @@ describe('ExecutionsView', () => {
 	  expect(await screen.findByText('无计划也可以如实保存，系统会记入纪律记录。')).toBeTruthy()
 	  expect(screen.getByRole('button', { name: '立即如实入账' })).toBeEnabled()
 	  expect(screen.getByText('只写事实，不连接券商，也不会下单。')).toBeTruthy()
+  })
+
+  it('repairs a stored corrupted instrument name when the page opens', async () => {
+    request.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/instruments') return Promise.resolve([{ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF� ���', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
+      if (path === '/api/plans') return Promise.resolve([])
+      if (path === '/api/instruments/resolve' && init?.method === 'POST') return Promise.resolve({ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF易方达', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false })
+      throw new Error(`unexpected ${path}`)
+    })
+
+    render(ExecutionsView)
+
+    expect(await screen.findByRole('option', { name: '159361 · A500ETF易方达' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: '159361 · A500ETF� ���' })).toBeNull()
   })
 
   it('can append a reversal with a required reason', async () => {
@@ -85,6 +109,39 @@ describe('ExecutionsView', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '从成交截图识别' }))
     expect(await screen.findByText('已识别：515880 · 买入 · 8000 股 · 0.652 元')).toBeTruthy()
     expect(screen.getByLabelText('成交均价')).toHaveValue(0.652)
+    expect(request).not.toHaveBeenCalledWith('/api/executions/quick', expect.anything())
+  })
+
+  it('prefills directly when a screenshot image is pasted from the clipboard', async () => {
+    window.discipline!.recognizeExecutionClipboard = vi.fn().mockResolvedValue({
+      name: '剪贴板截图',
+      lines: [
+        { text: '159361', confidence: 1 },
+        { text: '示例ETF', confidence: 0.9 },
+        { text: '买入，委托数量9800股', confidence: 1 },
+        { text: '11,956.00元（成交价格：1.22元）', confidence: 0.9 },
+        { text: '2026-08-25 10:34:21', confidence: 1 },
+      ],
+    })
+    request.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/instruments') return Promise.resolve([{ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF� ���', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
+      if (path === '/api/plans') return Promise.resolve([])
+      if (path === '/api/instruments/resolve' && init?.method === 'POST') return Promise.resolve({ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF易方达', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false })
+      throw new Error(`unexpected ${path}`)
+    })
+
+    render(ExecutionsView)
+    await screen.findByRole('button', { name: '粘贴截图识别' })
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', { value: { items: [{ type: 'image/png' }] } })
+    window.dispatchEvent(paste)
+
+    expect(await screen.findByText('已识别：159361 · 买入 · 9800 股 · 1.22 元')).toBeTruthy()
+    expect(screen.getByLabelText('证券')).toHaveValue('sz-159361')
+    expect(screen.getByRole('option', { name: '159361 · A500ETF易方达' })).toBeTruthy()
+    expect(screen.getByLabelText('成交均价')).toHaveValue(1.22)
+    expect(window.discipline?.recognizeExecutionClipboard).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith('/api/instruments/resolve', expect.objectContaining({ method: 'POST' }))
     expect(request).not.toHaveBeenCalledWith('/api/executions/quick', expect.anything())
   })
 })

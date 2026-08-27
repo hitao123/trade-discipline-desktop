@@ -23,9 +23,10 @@ onMounted(refresh)
       <div class="metric-grid">
         <article><span>账户净值（参考市值）</span><strong>{{ formatCNY(equity) }}</strong><small>统一资金池 {{ formatCNY(data.initialCapitalFen) }}</small></article>
         <article><span>可用现金</span><strong>{{ formatCNY(data.portfolio.availableCashFen) }}</strong><small>港股按实际人民币结算</small></article>
-        <article><span>中国科技敞口</span><strong>{{ formatCNY(data.portfolio.chinaTechExposureFen) }}</strong><small>上限 {{ formatCNY(data.chinaTechLimitFen) }}</small></article>
+        <article v-if="data.profileMode !== 'generic'"><span>中国科技敞口</span><strong>{{ formatCNY(data.portfolio.chinaTechExposureFen) }}</strong><small>上限 {{ formatCNY(data.chinaTechLimitFen) }}</small></article>
         <article><span>累计违规</span><strong>{{ data.violationCount }}</strong><small>违规盈利不加纪律分</small></article>
-        <article><span>腾讯顺序门槛</span><strong>{{ data.portfolio.alibabaObservationTradingDays }} / 20</strong><small>收盘观察日 · 纪律分 {{ (data.portfolio.disciplineScoreBP / 100).toFixed(0) }} / 90</small></article>
+        <article v-if="data.profileMode !== 'generic'"><span>腾讯顺序门槛</span><strong>{{ data.portfolio.alibabaObservationTradingDays }} / 20</strong><small>收盘观察日 · 纪律分 {{ (data.portfolio.disciplineScoreBP / 100).toFixed(0) }} / 90</small></article>
+        <article v-else><span>损失红线已使用</span><strong>{{ formatCNY(data.lossUsedFen) }}</strong><small>上限 {{ formatCNY(data.lossRedLineFen) }}</small></article>
       </div>
       <section class="risk-section"><RiskMeter label="组合损失红线使用" :used="data.lossUsedFen" :caution="data.lossCautionFen" :limit="data.lossRedLineFen" /></section>
       <section class="freshness"><strong>数据新鲜度</strong><span>{{ data.lastMarketFetch ? `最近收盘快照：${new Date(data.lastMarketFetch).toLocaleString('zh-CN')}` : '尚未获取收盘榜单，可去“市场榜单”刷新或导入 CSV' }}</span></section>

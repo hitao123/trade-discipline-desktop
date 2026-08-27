@@ -3,11 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SettingsView from './SettingsView.vue'
 
-const { request } = vi.hoisted(() => ({ request: vi.fn() }))
+const { request, profile, replaceProfile } = vi.hoisted(() => ({
+  request: vi.fn(),
+  profile: { value: {
+    id: 'local-user', mode: 'legacy', onboardingStatus: 'completed', investableCapitalFen: 20_000_000,
+    maxLossFen: 2_000_000, holdingHorizon: 'legacy_unspecified', enabledMarkets: ['ashare_stock', 'ashare_etf', 'hk'], updatedAt: '2026-08-25T00:00:00Z',
+  } },
+  replaceProfile: vi.fn(),
+}))
 vi.mock('@/renderer/lib/api', () => ({ api: { request } }))
+vi.mock('@/renderer/composables/useUserProfile', () => ({ useUserProfile: () => ({ profile, replaceProfile }) }))
 
 describe('SettingsView', () => {
   beforeEach(() => {
+    profile.value.mode = 'legacy'
     request.mockReset()
     request.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/rules' && !init) return Promise.resolve([{ id: 'rule-1', version: 1, reason: '初始规则', createdAt: '2026-08-12T00:00:00Z', snapshot: { initialCapitalFen: 20000000, lossCautionFen: 1500000, lossRedLineFen: 2000000, chinaTechLimitFen: 8000000 } }])
@@ -15,8 +24,17 @@ describe('SettingsView', () => {
       if (path === '/api/rules/versions') return Promise.resolve({ id: 'rule-2', version: 2 })
       if (path === '/api/monitor/settings' && !init) return Promise.resolve({ interval: '10m' })
       if (path === '/api/monitor/settings' && init?.method === 'PUT') return Promise.resolve({ interval: '15m' })
+      if (path === '/api/profile' && init?.method === 'PUT') return Promise.resolve({ ...profile.value, mode: 'generic' })
       throw new Error(`unexpected ${path}`)
     })
+  })
+
+  it('shows only generic profile fields for a new workspace', async () => {
+    profile.value.mode = 'generic'
+    render(SettingsView)
+    expect(await screen.findByLabelText('可投资总资金（元）')).toBeTruthy()
+    expect(screen.queryByText('中国科技敞口上限（元）')).toBeNull()
+    expect(screen.queryByText('腾讯顺序门槛（可选）')).toBeNull()
   })
 
   it('requires a reason before creating a new rule version', async () => {

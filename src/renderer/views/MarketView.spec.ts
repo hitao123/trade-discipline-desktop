@@ -65,7 +65,7 @@ describe('MarketView', () => {
     await fireEvent.click(screen.getByRole('button', { name: '查看走势' }))
     expect(await screen.findByRole('heading', { name: '示例股票' })).toBeTruthy()
     expect(await screen.findByRole('img', { name: /示例股票 收盘价/ })).toBeTruthy()
-    await fireEvent.click(screen.getByRole('button', { name: 'ETF 前 10' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'ETF 前 20' }))
     expect(await screen.findByText('沪深300ETF')).toBeTruthy()
     expect(screen.getByRole('button', { name: '加入观察' })).toBeTruthy()
   })

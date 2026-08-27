@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
 
+import { api } from '@/renderer/lib/api'
 import { parseExecutionScreenshot, type ExecutionScreenshotPrefill } from '@/renderer/lib/execution-screenshot'
 import type { Instrument } from '@/renderer/types'
 
@@ -10,6 +11,7 @@ interface Props {
 
 interface Emits {
   prefill: [draft: ExecutionScreenshotPrefill]
+  instrumentResolved: [instrument: Instrument]
 }
 
 const props = defineProps<Props>()
@@ -25,24 +27,35 @@ const summary = computed(() => {
   return `已识别：${draft.code ?? '代码待确认'} · ${draft.side === 'buy' ? '买入' : draft.side === 'sell' ? '卖出' : '方向待确认'} · ${draft.quantity ?? '数量待确认'} 股 · ${draft.localPrice ?? '价格待确认'} 元`
 })
 
-async function recognize() {
+type ScreenshotSelection = { name: string; lines: Array<{ text: string; confidence: number }> }
+
+async function recognizeWith(loader: (() => Promise<ScreenshotSelection | null>) | undefined, unavailableMessage: string) {
+  if (busy.value) return
   error.value = ''
-  const bridge = window.discipline?.recognizeExecutionScreenshot
-  if (!bridge) {
-    error.value = '当前环境没有本地截图识别能力，仍可继续手工填写。'
+  if (!loader) {
+    error.value = unavailableMessage
     return
   }
   busy.value = true
   try {
-    const selection = await bridge()
+    const selection = await loader()
     if (!selection) return
     fileName.value = selection.name
     const parsed = parseExecutionScreenshot(selection.lines)
-    const instrument = parsed.code
+    let instrument = parsed.code
       ? props.instruments.find(item => item.code.replace('.HK', '').padStart(6, '0') === parsed.code?.padStart(6, '0'))
       : undefined
     const warnings = [...parsed.warnings]
-    if (parsed.code && !instrument) warnings.push(`本地证券列表没有 ${parsed.code}，请先手动选择正确证券`)
+    if (parsed.code && (!instrument || instrument.name.includes('\uFFFD'))) {
+      try {
+        instrument = await api.request<Instrument>('/api/instruments/resolve', { method: 'POST', body: JSON.stringify({ code: parsed.code }) })
+        emit('instrumentResolved', instrument)
+      }
+      catch (cause) {
+        const message = cause instanceof Error ? cause.message : '公开行情查询失败'
+        warnings.push(`未能自动录入 ${parsed.code}：${message}`)
+      }
+    }
     const draft: ExecutionScreenshotPrefill = { ...parsed, instrumentId: instrument?.id, warnings }
     result.value = draft
     emit('prefill', draft)
@@ -54,6 +67,24 @@ async function recognize() {
     busy.value = false
   }
 }
+
+function recognizeFile() {
+  return recognizeWith(window.discipline?.recognizeExecutionScreenshot, '当前环境没有本地截图识别能力，仍可继续手工填写。')
+}
+
+function recognizeClipboard() {
+  return recognizeWith(window.discipline?.recognizeExecutionClipboard, '当前环境不能读取图片剪贴板，仍可选择截图文件。')
+}
+
+function handlePaste(event: ClipboardEvent) {
+  const containsImage = Array.from(event.clipboardData?.items ?? []).some(item => item.type.startsWith('image/'))
+  if (!containsImage || busy.value) return
+  event.preventDefault()
+  void recognizeClipboard()
+}
+
+onMounted(() => window.addEventListener('paste', handlePaste))
+onBeforeUnmount(() => window.removeEventListener('paste', handlePaste))
 </script>
 
 <template>
@@ -62,12 +93,17 @@ async function recognize() {
       <p>LOCAL OCR</p>
       <div>
         <h2 id="screenshot-import-title">用券商成交截图预填</h2>
-        <span>图片只在本机识别，不上传；识别后仍需你确认和填写情绪。</span>
+        <span>截图后直接按 ⌘V，或选择图片文件；只在本机识别，不上传。</span>
       </div>
     </div>
-    <button class="button button--secondary" type="button" :disabled="busy" @click="recognize">
-      {{ busy ? '正在本机识别…' : '从成交截图识别' }}
-    </button>
+    <div class="screenshot-import__actions">
+      <button class="button button--secondary" type="button" :disabled="busy" @click="recognizeFile">
+        从成交截图识别
+      </button>
+      <button class="button button--primary" type="button" aria-label="粘贴截图识别" :disabled="busy" @click="recognizeClipboard">
+        {{ busy ? '正在本机识别…' : '粘贴截图' }} <kbd v-if="!busy">⌘V</kbd>
+      </button>
+    </div>
     <div v-if="result" class="screenshot-result">
       <strong>{{ summary }}</strong>
       <span v-if="fileName">{{ fileName }}</span>
@@ -86,10 +122,12 @@ async function recognize() {
 .screenshot-import__copy p { margin: 0; color: var(--accent); font-size: 9px; letter-spacing: .14em; }
 .screenshot-import__copy h2 { margin: 0 0 4px; font-size: 14px; }
 .screenshot-import__copy span { color: var(--ink-muted); font-size: 11px; }
+.screenshot-import__actions { display: flex; gap: 8px; }
+.screenshot-import__actions kbd { margin-left: 5px; color: inherit; font: inherit; opacity: .7; }
 .screenshot-result { grid-column: 1 / -1; display: grid; gap: 5px; padding-top: 11px; border-top: 1px solid var(--line); font-size: 11px; }
 .screenshot-result strong { font-weight: 650; }
 .screenshot-result span, .screenshot-result small { color: var(--ink-muted); }
 .screenshot-result ul { display: grid; gap: 3px; margin: 2px 0 0; padding-left: 18px; color: var(--accent); }
 .screenshot-error { grid-column: 1 / -1; margin: 0; color: var(--accent); font-size: 11px; }
-@media (max-width: 700px) { .screenshot-import { grid-template-columns: 1fr; }.screenshot-import .button { justify-self: start; }.screenshot-result, .screenshot-error { grid-column: 1; } }
+@media (max-width: 700px) { .screenshot-import { grid-template-columns: 1fr; }.screenshot-import__actions { flex-wrap: wrap; }.screenshot-result, .screenshot-error { grid-column: 1; } }
 </style>

@@ -2,6 +2,8 @@ package market
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,17 +49,44 @@ func TestNormalizeStocksSortsByTurnoverAndExcludesST(t *testing.T) {
 	}
 }
 
-func TestNormalizeETFFiltersFixedIncomeBeforeTakingTopTen(t *testing.T) {
-	rows := []eastmoneyRow{
+func TestFetchETFTopTwentyFiltersCashAndBondProductsBeforeTruncating(t *testing.T) {
+	if IsEligibleETF("511880", "银华日利ETF") || IsEligibleETF("511990", "华宝添益ETF") {
+		t.Fatal("cash-management ETF codes must be rejected even when the public name omits 货币")
+	}
+	if IsEligibleETFName("公司债ETF南方") {
+		t.Fatal("bond ETF must be rejected")
+	}
+	if !IsEligibleETFName("通信ETF国泰") {
+		t.Fatal("equity ETF must remain eligible")
+	}
+	rows := []eastmoneyWireRow{
+		{Price: 100, Turnover: 130, Code: "511880", Market: 1, Name: "银华日利ETF", QuoteUnix: 1786492800},
+		{Price: 100, Turnover: 125, Code: "511990", Market: 1, Name: "华宝添益ETF", QuoteUnix: 1786492800},
 		{Price: 100, Turnover: 120, Code: "511360", Market: 1, Name: "短融ETF海富通", QuoteUnix: 1786492800},
 		{Price: 100, Turnover: 110, Code: "159115", Market: 0, Name: "科创债", QuoteUnix: 1786492800},
-		{Price: 100, Turnover: 100, Code: "511990", Market: 1, Name: "华宝添益货币ETF", QuoteUnix: 1786492800},
-		{Price: 0.64, Turnover: 90, Code: "515880", Market: 1, Name: "通信ETF国泰", QuoteUnix: 1786492800},
-		{Price: 9.57, Turnover: 80, Code: "518880", Market: 1, Name: "黄金ETF华安", QuoteUnix: 1786492800},
-		{Price: 4.2, Turnover: 70, Code: "510300", Market: 1, Name: "沪深300ETF", QuoteUnix: 1786492800},
 	}
-	got := normalizeRanking(rows, KindETF, 10)
-	if len(got) != 3 || got[0].Code != "515880" || got[1].Code != "518880" || got[2].Code != "510300" {
+	for index := 0; index < 22; index++ {
+		rows = append(rows, eastmoneyWireRow{
+			Price: 1, Turnover: flexibleFloat(100 - index), Code: fmt.Sprintf("15%04d", index), Market: 0,
+			Name: fmt.Sprintf("权益ETF%02d", index), QuoteUnix: 1786492800,
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(struct {
+			Data struct {
+				Diff []eastmoneyWireRow `json:"diff"`
+			} `json:"data"`
+		}{Data: struct {
+			Diff []eastmoneyWireRow `json:"diff"`
+		}{Diff: rows}})
+	}))
+	defer server.Close()
+
+	got, err := (&EastmoneyProvider{BaseURL: server.URL, Client: server.Client()}).FetchRankings(context.Background(), KindETF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 20 || got[0].Name != "权益ETF00" || got[19].Name != "权益ETF19" {
 		t.Fatalf("unexpected ETF ranking: %#v", got)
 	}
 	for _, quote := range got {

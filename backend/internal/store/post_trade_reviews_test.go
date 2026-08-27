@@ -9,7 +9,7 @@ import (
 )
 
 func TestQuickExecutionCreatesPendingReviewAtomically(t *testing.T) {
-	db := openTestStore(t)
+	db := openLegacyTestStore(t)
 	ctx := context.Background()
 	ruleID, err := db.CurrentRuleVersionID(ctx)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestQuickExecutionCreatesPendingReviewAtomically(t *testing.T) {
 }
 
 func TestPostTradeReviewCompletionRequiresNoteAndFXObservationDoesNotChangeSettlement(t *testing.T) {
-	db := openTestStore(t)
+	db := openLegacyTestStore(t)
 	ctx := context.Background()
 	ruleID, err := db.CurrentRuleVersionID(ctx)
 	if err != nil {

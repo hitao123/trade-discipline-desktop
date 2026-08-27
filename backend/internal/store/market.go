@@ -293,11 +293,18 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotM
 	if mode != market.SnapshotModeClose && mode != market.SnapshotModeLive {
 		return MarketSnapshotRow{}, fmt.Errorf("unsupported market snapshot mode %q", mode)
 	}
-	if len(quotes) == 0 {
+	eligibleQuotes := make([]market.Quote, 0, len(quotes))
+	for _, quote := range quotes {
+		if kind == market.KindETF && !market.IsEligibleETF(quote.Code, quote.Name) {
+			continue
+		}
+		eligibleQuotes = append(eligibleQuotes, quote)
+	}
+	if len(eligibleQuotes) == 0 {
 		return MarketSnapshotRow{}, fmt.Errorf("%s 榜单没有有效数据", kind)
 	}
-	tradeDate := quotes[0].TradeDate
-	for _, quote := range quotes {
+	tradeDate := eligibleQuotes[0].TradeDate
+	for _, quote := range eligibleQuotes {
 		if quote.TradeDate != tradeDate || quote.AssetType != kind {
 			return MarketSnapshotRow{}, fmt.Errorf("%s 榜单交易日或资产类型不一致", kind)
 		}
@@ -311,7 +318,7 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotM
 	if _, err := tx.ExecContext(ctx, `INSERT INTO market_snapshots(id, trade_date, ranking_kind, snapshot_mode, source, fetched_at, status, version) VALUES(?,?,?,?,?,?,'success',?)`, id, tradeDate, kind, mode, source, stamp, version); err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("insert market snapshot: %w", err)
 	}
-	for index, quote := range quotes {
+	for index, quote := range eligibleQuotes {
 		currency := "CNY"
 		lotSize := 100
 		instrumentID := quote.Market + "-" + quote.Code
@@ -326,10 +333,10 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotM
 			return MarketSnapshotRow{}, fmt.Errorf("insert market rank %s: %w", quote.Code, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'market_snapshot', ?, 'imported', NULL, ?, ?)`, NewID("audit"), id, fmt.Sprintf(`{"kind":%q,"rows":%d}`, kind, len(quotes)), stamp); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'market_snapshot', ?, 'imported', NULL, ?, ?)`, NewID("audit"), id, fmt.Sprintf(`{"kind":%q,"rows":%d}`, kind, len(eligibleQuotes)), stamp); err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("audit market snapshot: %w", err)
 	}
-	return MarketSnapshotRow{ID: id, TradeDate: tradeDate, Kind: kind, Mode: mode, Source: source, FetchedAt: fetchedAt.UTC(), Version: version, Entries: quotes}, nil
+	return MarketSnapshotRow{ID: id, TradeDate: tradeDate, Kind: kind, Mode: mode, Source: source, FetchedAt: fetchedAt.UTC(), Version: version, Entries: eligibleQuotes}, nil
 }
 
 func (s *Store) LatestMarketSnapshot(ctx context.Context, kind market.RankingKind) (MarketSnapshotRow, error) {

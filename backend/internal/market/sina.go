@@ -103,7 +103,7 @@ func (p SinaProvider) FetchRankings(ctx context.Context, kind RankingKind) ([]Qu
 		if kind == KindStock && (strings.Contains(nameUpper, "ST") || strings.Contains(nameUpper, "退")) {
 			continue
 		}
-		if kind == KindETF && !visibleETF(name) {
+		if kind == KindETF && !visibleETF(code, name) {
 			continue
 		}
 		sourceTime := marketStamp
@@ -129,9 +129,9 @@ func (p SinaProvider) FetchRankings(ctx context.Context, kind RankingKind) ([]Qu
 		}
 		return quotes[i].TurnoverFen > quotes[j].TurnoverFen
 	})
-	limit := 20
+	limit := StockRankingLimit
 	if kind == KindETF {
-		limit = 10
+		limit = ETFRankingLimit
 	}
 	if len(quotes) > limit {
 		quotes = quotes[:limit]

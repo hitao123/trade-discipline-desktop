@@ -135,9 +135,9 @@ func (p *EastmoneyProvider) FetchRankings(ctx context.Context, kind RankingKind)
 			Code: item.Code, Market: item.Market, Name: item.Name, QuoteUnix: item.QuoteUnix,
 		})
 	}
-	limit := 20
+	limit := StockRankingLimit
 	if kind == KindETF {
-		limit = 10
+		limit = ETFRankingLimit
 	}
 	return normalizeRanking(rows, kind, limit), nil
 }
@@ -235,7 +235,7 @@ func normalizeRanking(rows []eastmoneyRow, kind RankingKind, limit int) []Quote 
 		if kind == KindStock && (strings.Contains(nameUpper, "ST") || strings.Contains(nameUpper, "退")) {
 			continue
 		}
-		if kind == KindETF && !visibleETF(row.Name) {
+		if kind == KindETF && !visibleETF(row.Code, row.Name) {
 			continue
 		}
 		if row.Price < 0 || row.Turnover < 0 || row.Code == "" {

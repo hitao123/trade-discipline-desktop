@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import logoUrl from '@/assets/logo.svg'
+import { userProfileKey } from '@/renderer/composables/useUserProfile'
+import { api } from '@/renderer/lib/api'
+import type { UserProfile } from '@/renderer/types'
+import OnboardingView from '@/renderer/views/OnboardingView.vue'
 
-const navigation = [
+const allNavigation = [
   { to: '/', label: '今日', index: '01' },
   { to: '/watchlist', label: '观察名单', index: '02' },
   { to: '/plans', label: '交易计划', index: '03' },
@@ -17,17 +21,68 @@ const navigation = [
 ]
 
 const router = useRouter()
+const appState = ref<'loading' | 'error' | 'pending' | 'completed'>('loading')
+const profile = ref<UserProfile | null>(null)
+const loadError = ref('')
+const navigation = computed(() => allNavigation.filter(item => !(item.to === '/market' && profile.value?.mode === 'generic' && profile.value.enabledMarkets.length === 1 && profile.value.enabledMarkets[0] === 'hk')))
 let removeMonitorAlertListener: (() => void) | undefined
 
-onMounted(() => {
-  removeMonitorAlertListener = window.discipline?.onMonitorAlert(() => { void router.push('/positions') })
-})
+function replaceProfile(next: UserProfile) {
+  profile.value = next
+}
+
+provide(userProfileKey, { profile: computed(() => profile.value), replaceProfile })
+
+function startMonitorAlertListener() {
+  if (!removeMonitorAlertListener)
+    removeMonitorAlertListener = window.discipline?.onMonitorAlert(() => { void router.push('/positions') })
+}
+
+async function loadProfile() {
+  appState.value = 'loading'
+  loadError.value = ''
+  try {
+    const current = await api.request<UserProfile>('/api/onboarding')
+    replaceProfile(current)
+    appState.value = current.onboardingStatus === 'completed' ? 'completed' : 'pending'
+    if (appState.value === 'completed')
+      startMonitorAlertListener()
+  }
+  catch (error) {
+    appState.value = 'error'
+    loadError.value = error instanceof Error ? error.message : '无法检查本地工作区状态'
+  }
+}
+
+async function handleOnboardingCompleted(next: UserProfile) {
+  replaceProfile(next)
+  appState.value = 'completed'
+  await router.replace('/')
+  startMonitorAlertListener()
+}
+
+onMounted(() => { void loadProfile() })
 
 onBeforeUnmount(() => removeMonitorAlertListener?.())
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="appState === 'loading'" class="app-gate">
+    <img :src="logoUrl" class="app-gate__logo" alt="" />
+    <p class="app-gate__name">Plain Rule</p>
+    <p>正在打开本地工作区…</p>
+  </div>
+
+  <div v-else-if="appState === 'error'" class="app-gate">
+    <img :src="logoUrl" class="app-gate__logo" alt="" />
+    <p class="app-gate__name">暂时无法打开本地工作区</p>
+    <p>{{ loadError }}</p>
+    <button type="button" class="button button--primary" @click="loadProfile">重新检查本地服务</button>
+  </div>
+
+  <OnboardingView v-else-if="appState === 'pending'" @completed="handleOnboardingCompleted" />
+
+  <div v-else class="app-shell">
     <aside class="sidebar">
       <header class="brand">
         <img :src="logoUrl" class="brand__mark brand__mark--logo" alt="" />

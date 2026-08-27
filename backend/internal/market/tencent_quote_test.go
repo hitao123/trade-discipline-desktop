@@ -40,3 +40,21 @@ func TestTencentQuoteProviderNormalizesAShareAndHongKongQuotes(t *testing.T) {
 		t.Fatalf("source metadata=%#v want=%s", quotes[0], wantTime)
 	}
 }
+
+func TestTencentQuoteProviderDecodesGB18030SecurityNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=GBK")
+		body := append([]byte(`v_sz159361="1~A500ETF`), []byte{0xd2, 0xd7, 0xb7, 0xbd, 0xb4, 0xef}...)
+		body = append(body, []byte(`~159361~1.22~~~~~~~~~~~~~~~~~~~~~~~~~~20260824134633";`)...)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	quotes, err := (TencentQuoteProvider{BaseURL: server.URL, Client: server.Client()}).FetchQuotes(context.Background(), []InstrumentKey{{Market: "SZ", Code: "159361"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quotes) != 1 || quotes[0].Name != "A500ETF易方达" {
+		t.Fatalf("quote name=%q", quotes[0].Name)
+	}
+}

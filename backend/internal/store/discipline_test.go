@@ -23,7 +23,7 @@ func disciplinePlan(t *testing.T, db *Store) PlanRow {
 }
 
 func TestCreatePreTradeConfirmationKeepsPlanSnapshot(t *testing.T) {
-	db := openTestStore(t)
+	db := openLegacyTestStore(t)
 	plan := disciplinePlan(t, db)
 	confirmed, err := db.CreatePreTradeConfirmation(context.Background(), plan.ID, `{"code":"9988.HK"}`, disciplineNow.Add(-30*time.Second), disciplineNow)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestCreatePreTradeConfirmationKeepsPlanSnapshot(t *testing.T) {
 }
 
 func TestCreatePriceAlertIfCrossedSuppressesContinuousTrigger(t *testing.T) {
-	db := openTestStore(t)
+	db := openLegacyTestStore(t)
 	plan := disciplinePlan(t, db)
 	alert := domain.PriceAlertEvent{
 		PlanID: plan.ID, InstrumentID: "hk-9988", Kind: domain.AlertRiskExit,
@@ -64,7 +64,7 @@ func TestCreatePriceAlertIfCrossedSuppressesContinuousTrigger(t *testing.T) {
 }
 
 func TestCreatePositionReviewClosesOnlyThatAlert(t *testing.T) {
-	db := openTestStore(t)
+	db := openLegacyTestStore(t)
 	plan := disciplinePlan(t, db)
 	first := createRiskAlert(t, db, plan.ID, disciplineNow)
 	if err := db.RecordAlertState(context.Background(), plan.ID, domain.AlertRiskExit, false, disciplineNow.Add(time.Minute)); err != nil {
@@ -85,7 +85,7 @@ func TestCreatePositionReviewClosesOnlyThatAlert(t *testing.T) {
 }
 
 func TestListUnnotifiedAlertsSkipsReviewedAlert(t *testing.T) {
-	db := openTestStore(t)
+	db := openLegacyTestStore(t)
 	plan := disciplinePlan(t, db)
 	alert := createRiskAlert(t, db, plan.ID, disciplineNow)
 	if _, err := db.CreatePositionReview(context.Background(), alert.ID, domain.ReviewHold, "已经完成复核", disciplineNow.Add(time.Minute)); err != nil {

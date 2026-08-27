@@ -9,6 +9,14 @@ import (
 	"github.com/local/trade-discipline-desktop/backend/internal/market"
 )
 
+func (s *Store) AccountInitialCashFen(ctx context.Context) (int64, error) {
+	var amount int64
+	if err := s.db.QueryRowContext(ctx, `SELECT initial_capital_fen FROM accounts WHERE status='active' ORDER BY enabled_at LIMIT 1`).Scan(&amount); err != nil {
+		return 0, fmt.Errorf("load account initial cash: %w", err)
+	}
+	return amount, nil
+}
+
 func (s *Store) DisciplineProgress(ctx context.Context, now time.Time) (int, int, error) {
 	var firstAlibabaBuy sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT MIN(e.executed_at)
@@ -50,7 +58,7 @@ func (s *Store) ListInstruments(ctx context.Context) ([]InstrumentRow, error) {
 		return nil, fmt.Errorf("list instruments: %w", err)
 	}
 	defer rows.Close()
-	var instruments []InstrumentRow
+	instruments := make([]InstrumentRow, 0)
 	for rows.Next() {
 		var item InstrumentRow
 		var tech int
@@ -58,9 +66,31 @@ func (s *Store) ListInstruments(ctx context.Context) ([]InstrumentRow, error) {
 			return nil, fmt.Errorf("scan instrument: %w", err)
 		}
 		item.IsChinaTech = tech == 1
+		if item.AssetType == string(market.KindETF) && !market.IsEligibleETF(item.Code, item.Name) {
+			continue
+		}
 		instruments = append(instruments, item)
 	}
 	return instruments, rows.Err()
+}
+
+func (s *Store) InstrumentsByID(ctx context.Context) (map[string]InstrumentRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, market, code, name, asset_type, currency, lot_size, is_china_tech FROM instruments`)
+	if err != nil {
+		return nil, fmt.Errorf("list instrument metadata: %w", err)
+	}
+	defer rows.Close()
+	items := make(map[string]InstrumentRow)
+	for rows.Next() {
+		var item InstrumentRow
+		var tech int
+		if err := rows.Scan(&item.ID, &item.Market, &item.Code, &item.Name, &item.AssetType, &item.Currency, &item.LotSize, &tech); err != nil {
+			return nil, fmt.Errorf("scan instrument metadata: %w", err)
+		}
+		item.IsChinaTech = tech == 1
+		items[item.ID] = item
+	}
+	return items, rows.Err()
 }
 
 type AuditRow struct {
@@ -82,7 +112,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditRow, error) {
 		return nil, fmt.Errorf("list audit: %w", err)
 	}
 	defer rows.Close()
-	var entries []AuditRow
+	entries := make([]AuditRow, 0)
 	for rows.Next() {
 		var item AuditRow
 		if err := rows.Scan(&item.ID, &item.EntityType, &item.EntityID, &item.Action, &item.BeforeJSON, &item.AfterJSON, &item.CreatedAt); err != nil {
@@ -95,10 +125,18 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditRow, error) {
 
 func (s *Store) CountViolations(ctx context.Context) (int, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM violation_events`).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM violation_events WHERE acknowledged_at IS NULL`).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count violations: %w", err)
 	}
 	return count, nil
+}
+
+func (s *Store) ExecutionHasActiveViolation(ctx context.Context, executionID string) (bool, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM violation_events WHERE execution_id=? AND acknowledged_at IS NULL)`, executionID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspect active execution violation: %w", err)
+	}
+	return exists == 1, nil
 }
 
 func (s *Store) LatestSuccessfulMarketFetch(ctx context.Context) *time.Time {
