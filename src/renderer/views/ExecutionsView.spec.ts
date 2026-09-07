@@ -12,6 +12,7 @@ describe('ExecutionsView', () => {
     request.mockImplementation((path: string) => {
       if (path === '/api/instruments') return Promise.resolve([{ id: 'hk-9988', code: '9988.HK', name: '阿里巴巴-W', lotSize: 100 }])
       if (path === '/api/plans') return Promise.resolve([])
+      if (path === '/api/executions') return Promise.resolve([])
       throw new Error(`unexpected ${path}`)
     })
     Object.defineProperty(window, 'discipline', {
@@ -52,6 +53,7 @@ describe('ExecutionsView', () => {
     request.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/instruments') return Promise.resolve([{ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF� ���', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
       if (path === '/api/plans') return Promise.resolve([])
+      if (path === '/api/executions') return Promise.resolve([])
       if (path === '/api/instruments/resolve' && init?.method === 'POST') return Promise.resolve({ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF易方达', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false })
       throw new Error(`unexpected ${path}`)
     })
@@ -67,6 +69,7 @@ describe('ExecutionsView', () => {
       if (path === '/api/instruments') return Promise.resolve([{ id: 'hk-9988', code: '9988.HK', name: '阿里巴巴-W', lotSize: 100 }])
       if (path === '/api/plans') return Promise.resolve([])
       if (path === '/api/executions' && init?.method === 'POST') return Promise.resolve({ id: 'execution-1', classification: 'serious_violation', violationCode: 'UNPLANNED_EXECUTION', position: { quantity: 100 }, cashFen: 18_795_000 })
+      if (path === '/api/executions') return Promise.resolve([])
       if (path === '/api/executions/execution-1/reverse' && init?.method === 'POST') return Promise.resolve({ id: 'execution-2', classification: 'reversed', position: { quantity: 0 }, cashFen: 20_000_000 })
       throw new Error(`unexpected ${path}`)
     })
@@ -87,21 +90,25 @@ describe('ExecutionsView', () => {
     request.mockImplementation((path: string, init?: RequestInit) => {
 	  if (path === '/api/instruments') return Promise.resolve([{ id: 'hk-9988', market: 'HK', code: '9988.HK', name: '阿里巴巴-W', assetType: 'stock', currency: 'HKD', lotSize: 100, isChinaTech: true }])
 	  if (path === '/api/plans') return Promise.resolve([])
+	  if (path === '/api/executions') return Promise.resolve([])
 	  if (path === '/api/executions/quick' && init?.method === 'POST') return Promise.resolve({ id: 'execution-quick', classification: 'serious_violation', violationCode: 'UNPLANNED_EXECUTION', position: { quantity: 100 }, cashFen: 18_795_000, pendingReview: true })
 	  throw new Error(`unexpected ${path}`)
 	})
 	render(ExecutionsView)
-	await fireEvent.update(await screen.findByLabelText('成交均价'), '120')
+	await screen.findByRole('option', { name: '9988.HK · 阿里巴巴-W' })
+	await fireEvent.update(screen.getByLabelText('成交均价'), '120')
 	await fireEvent.update(screen.getByLabelText('券商实际人民币扣款/到账（元）'), '12050')
 	await fireEvent.click(screen.getByRole('button', { name: '立即如实入账' }))
 	expect(await screen.findByText('已加入待复盘')).toBeTruthy()
 	await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/quick', expect.objectContaining({ method: 'POST' })))
+	expect(screen.getByLabelText('成交均价')).toHaveValue(0)
   })
 
   it('prefills from a local screenshot without recording before confirmation', async () => {
     request.mockImplementation((path: string) => {
       if (path === '/api/instruments') return Promise.resolve([{ id: 'sh-515880', market: 'SH', code: '515880', name: '通信ETF国泰', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
       if (path === '/api/plans') return Promise.resolve([])
+      if (path === '/api/executions') return Promise.resolve([])
       throw new Error(`unexpected ${path}`)
     })
 
@@ -126,6 +133,7 @@ describe('ExecutionsView', () => {
     request.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/instruments') return Promise.resolve([{ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF� ���', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false }])
       if (path === '/api/plans') return Promise.resolve([])
+      if (path === '/api/executions') return Promise.resolve([])
       if (path === '/api/instruments/resolve' && init?.method === 'POST') return Promise.resolve({ id: 'sz-159361', market: 'SZ', code: '159361', name: 'A500ETF易方达', assetType: 'etf', currency: 'CNY', lotSize: 100, isChinaTech: false })
       throw new Error(`unexpected ${path}`)
     })

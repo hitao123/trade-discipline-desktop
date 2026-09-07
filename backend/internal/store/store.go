@@ -19,7 +19,7 @@ type Store struct {
 	path string
 }
 
-const CurrentSchemaVersion = 11
+const CurrentSchemaVersion = 13
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -71,6 +71,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := ensureMarketRefreshHealth(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureRankingSnapshotQuality(ctx, tx); err != nil {
+		return err
+	}
 	if err := ensureExecutionPricePrecision(ctx, tx); err != nil {
 		return err
 	}
@@ -111,8 +114,31 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := ensureUserProfileMigration(ctx, tx, legacyDatabase, time.Now()); err != nil {
 		return err
 	}
+	if err := migrateGenericWorkspace(ctx, tx, time.Now()); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
+	}
+	return nil
+}
+
+func ensureRankingSnapshotQuality(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS market_snapshots_ranking_history ON market_snapshots(ranking_kind, snapshot_mode, trade_date DESC, version DESC)`); err != nil {
+		return fmt.Errorf("index ranking snapshot history: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS market_snapshot_quality (
+		snapshot_id TEXT PRIMARY KEY REFERENCES market_snapshots(id) ON DELETE CASCADE,
+		comparison_quality TEXT NOT NULL CHECK(comparison_quality IN ('verified_close','legacy_unverified','manual_unverified','incomplete')),
+		universe_version TEXT, quality_reason TEXT)`); err != nil {
+		return fmt.Errorf("create ranking snapshot quality: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO market_snapshot_quality(snapshot_id, comparison_quality, quality_reason)
+		SELECT id, 'legacy_unverified', '历史快照缺少完整性证明' FROM market_snapshots`); err != nil {
+		return fmt.Errorf("mark legacy ranking snapshots: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (13, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return fmt.Errorf("record ranking quality migration: %w", err)
 	}
 	return nil
 }

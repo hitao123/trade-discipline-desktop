@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -81,6 +82,15 @@ type MetricBatch struct {
 	Points []MetricPoint         `json:"points"`
 	Errors map[MetricKind]string `json:"errors,omitempty"`
 }
+
+func CurrencyForMarket(marketName string) string {
+	if strings.EqualFold(marketName, "HK") {
+		return "HKD"
+	}
+	return "CNY"
+}
+
+func DefaultLotSize(string) int { return 100 }
 
 type Provider interface {
 	FetchRankings(ctx context.Context, kind RankingKind) ([]Quote, error)

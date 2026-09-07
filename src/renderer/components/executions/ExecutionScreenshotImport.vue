@@ -43,12 +43,12 @@ async function recognizeWith(loader: (() => Promise<ScreenshotSelection | null>)
     fileName.value = selection.name
     const parsed = parseExecutionScreenshot(selection.lines)
     let instrument = parsed.code
-      ? props.instruments.find(item => item.code.replace('.HK', '').padStart(6, '0') === parsed.code?.padStart(6, '0'))
+      ? props.instruments.find(item => codesMatch(item.code, parsed.code))
       : undefined
     const warnings = [...parsed.warnings]
     if (parsed.code && (!instrument || instrument.name.includes('\uFFFD'))) {
       try {
-        instrument = await api.request<Instrument>('/api/instruments/resolve', { method: 'POST', body: JSON.stringify({ code: parsed.code }) })
+        instrument = await api.request<Instrument>('/api/instruments/resolve', { method: 'POST', body: JSON.stringify({ code: parsed.code, market: parsed.market }) })
         emit('instrumentResolved', instrument)
       }
       catch (cause) {
@@ -81,6 +81,12 @@ function handlePaste(event: ClipboardEvent) {
   if (!containsImage || busy.value) return
   event.preventDefault()
   void recognizeClipboard()
+}
+
+function codesMatch(left?: string, right?: string) {
+  if (!left || !right) return false
+  const normalize = (value: string) => value.replace(/\.HK$/i, '').replace(/^0+/, '')
+  return left === right || normalize(left) === normalize(right)
 }
 
 onMounted(() => window.addEventListener('paste', handlePaste))

@@ -40,6 +40,29 @@ func hasExistingApplicationState(ctx context.Context, tx *sql.Tx) (bool, error) 
 	return false, nil
 }
 
+func migrateGenericWorkspace(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	var applied int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version=12`).Scan(&applied); err != nil {
+		return fmt.Errorf("inspect generic workspace migration: %w", err)
+	}
+	if applied > 0 {
+		return nil
+	}
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE user_profiles SET mode='generic', updated_at=?`, stamp); err != nil {
+		return fmt.Errorf("promote profiles to generic: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE user_profiles
+		SET investable_capital_fen=(SELECT initial_capital_fen FROM accounts WHERE status='active' ORDER BY enabled_at LIMIT 1)
+		WHERE investable_capital_fen IS NULL AND EXISTS (SELECT 1 FROM accounts WHERE status='active')`); err != nil {
+		return fmt.Errorf("backfill generic capital: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (12, ?)`, stamp); err != nil {
+		return fmt.Errorf("record generic workspace migration: %w", err)
+	}
+	return nil
+}
+
 func ensureUserProfileMigration(ctx context.Context, tx *sql.Tx, legacyDatabase bool, now time.Time) error {
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	if legacyDatabase {

@@ -53,9 +53,6 @@ func (s *Service) UpdateUserProfile(ctx context.Context, input UpdateUserProfile
 	if strings.TrimSpace(input.Reason) == "" {
 		return domain.UserProfile{}, CodedError{Code: "INVALID_PROFILE", Message: "请填写修改原因"}
 	}
-	if err := validateOnboardingInput(input.CompleteOnboardingInput); err != nil {
-		return domain.UserProfile{}, CodedError{Code: "INVALID_PROFILE", Message: err.Error()}
-	}
 	profile, err := s.store.UserProfile(ctx)
 	if err != nil {
 		return domain.UserProfile{}, err
@@ -63,17 +60,22 @@ func (s *Service) UpdateUserProfile(ctx context.Context, input UpdateUserProfile
 	if profile.Mode != domain.UserModeGeneric || profile.OnboardingStatus != domain.OnboardingCompleted {
 		return domain.UserProfile{}, CodedError{Code: "PROFILE_MODE_CONFLICT", Message: store.ErrGenericProfileRequired.Error()}
 	}
+	// 资金基准只通过资金变动（cash_events）维护，资料更新沿用现有本金，仅校验损失上限相对现有本金合理。
+	capital := profile.InvestableCapitalFen
+	if err := validateProfileScope(capital, input.MaxLossFen, input.HoldingHorizon, input.EnabledMarkets); err != nil {
+		return domain.UserProfile{}, CodedError{Code: "INVALID_PROFILE", Message: err.Error()}
+	}
 	current, err := s.store.CurrentRule(ctx)
 	if err != nil {
 		return domain.UserProfile{}, err
 	}
-	next := rules.GenericSnapshot(input.InvestableCapitalFen, input.MaxLossFen)
+	next := rules.GenericSnapshot(capital, input.MaxLossFen)
 	next.HKBoardLot = current.HKBoardLot
 	next.HKDCNYRateBP = current.HKDCNYRateBP
+	next.CurrencyRatesBP = current.CurrencyRatesBP
 	next.NoAddToLosingInstrument = current.NoAddToLosingInstrument
 	next.ExitCodes = append([]string(nil), current.ExitCodes...)
 	next.Cooldown = current.Cooldown
-	profile.InvestableCapitalFen = input.InvestableCapitalFen
 	profile.MaxLossFen = input.MaxLossFen
 	profile.HoldingHorizon = input.HoldingHorizon
 	profile.EnabledMarkets = normalizedMarketScopes(input.EnabledMarkets)
@@ -91,7 +93,11 @@ func validateOnboardingInput(input CompleteOnboardingInput) error {
 	if input.InvestableCapitalFen <= 0 {
 		return CodedError{Code: "INVALID_ONBOARDING", Message: "可投资总资金必须大于 0"}
 	}
-	if input.MaxLossFen <= 0 || input.MaxLossFen >= input.InvestableCapitalFen {
+	return validateProfileScope(input.InvestableCapitalFen, input.MaxLossFen, input.HoldingHorizon, input.EnabledMarkets)
+}
+
+func validateProfileScope(capitalFen, maxLossFen int64, horizon domain.HoldingHorizon, markets []domain.MarketScope) error {
+	if maxLossFen <= 0 || maxLossFen >= capitalFen {
 		return CodedError{Code: "INVALID_ONBOARDING", Message: "最大可承受损失必须大于 0 且小于总资金"}
 	}
 	validHorizon := map[domain.HoldingHorizon]bool{
@@ -100,13 +106,13 @@ func validateOnboardingInput(input CompleteOnboardingInput) error {
 		domain.Horizon1To3Y:   true,
 		domain.HorizonOver3Y:  true,
 	}
-	if !validHorizon[input.HoldingHorizon] {
+	if !validHorizon[horizon] {
 		return CodedError{Code: "INVALID_ONBOARDING", Message: "请选择预期持有期限"}
 	}
-	if len(normalizedMarketScopes(input.EnabledMarkets)) == 0 {
+	if len(normalizedMarketScopes(markets)) == 0 {
 		return CodedError{Code: "INVALID_ONBOARDING", Message: "请至少选择一个使用市场"}
 	}
-	for _, scope := range input.EnabledMarkets {
+	for _, scope := range markets {
 		if scope != domain.MarketAShareStock && scope != domain.MarketAShareETF && scope != domain.MarketHK {
 			return CodedError{Code: "INVALID_ONBOARDING", Message: fmt.Sprintf("不支持的市场范围：%s", scope)}
 		}

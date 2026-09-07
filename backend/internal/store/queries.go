@@ -18,27 +18,12 @@ func (s *Store) AccountInitialCashFen(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) DisciplineProgress(ctx context.Context, now time.Time) (int, int, error) {
-	var firstAlibabaBuy sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT MIN(e.executed_at)
-		FROM execution_events e
-		JOIN instruments i ON i.id=e.instrument_id
-		WHERE i.code='9988.HK' AND e.event_type='buy'
-		AND NOT EXISTS (SELECT 1 FROM execution_events reversal WHERE reversal.original_event_id=e.id AND reversal.event_type='reversal')`).Scan(&firstAlibabaBuy)
-	if err != nil {
-		return 0, 0, fmt.Errorf("load Alibaba observation start: %w", err)
-	}
-	days := 0
-	if firstAlibabaBuy.Valid && len(firstAlibabaBuy.String) >= 10 {
-		if err := s.db.QueryRowContext(ctx, `SELECT count(DISTINCT trade_date) FROM market_snapshots WHERE ranking_kind='stock' AND status='success' AND trade_date>=? AND trade_date<=?`, firstAlibabaBuy.String[:10], now.UTC().Format("2006-01-02")).Scan(&days); err != nil {
-			return 0, 0, fmt.Errorf("count Alibaba observation days: %w", err)
-		}
-	}
 	var score sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT discipline_score_bp FROM weekly_reviews WHERE submitted_at<=? ORDER BY submitted_at DESC LIMIT 1`, now.UTC().Format(time.RFC3339Nano)).Scan(&score)
+	err := s.db.QueryRowContext(ctx, `SELECT discipline_score_bp FROM weekly_reviews WHERE submitted_at<=? ORDER BY submitted_at DESC LIMIT 1`, now.UTC().Format(time.RFC3339Nano)).Scan(&score)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, 0, fmt.Errorf("load latest discipline score: %w", err)
 	}
-	return days, int(score.Int64), nil
+	return 0, int(score.Int64), nil
 }
 
 type InstrumentRow struct {
@@ -129,6 +114,23 @@ func (s *Store) CountViolations(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("count violations: %w", err)
 	}
 	return count, nil
+}
+
+func (s *Store) ActiveViolationCodesByExecution(ctx context.Context) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT execution_id, rule_code FROM violation_events WHERE acknowledged_at IS NULL AND execution_id IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("list active violation codes: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string][]string)
+	for rows.Next() {
+		var executionID, code string
+		if err := rows.Scan(&executionID, &code); err != nil {
+			return nil, fmt.Errorf("scan active violation code: %w", err)
+		}
+		result[executionID] = append(result[executionID], code)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) ExecutionHasActiveViolation(ctx context.Context, executionID string) (bool, error) {

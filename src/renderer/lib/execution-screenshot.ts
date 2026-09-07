@@ -5,6 +5,7 @@ export interface OCRLine {
 
 export interface ExecutionScreenshotDraft {
   code?: string | undefined
+  market?: 'HK' | 'SH' | 'SZ' | undefined
   name?: string | undefined
   side?: 'buy' | 'sell' | undefined
   quantity?: number | undefined
@@ -29,7 +30,13 @@ export function parseExecutionScreenshot(lines: OCRLine[]): ExecutionScreenshotD
   const texts = lines.map(line => line.text.trim()).filter(Boolean)
   const joined = texts.join('\n')
   const compact = texts.join(' ')
-  const code = compact.match(/\b([013568]\d{5})\b/)?.[1]
+  const aShareCode = compact.match(/\b([013568]\d{5})\b/)?.[1]
+  const hkExplicit = compact.match(/\b(\d{4,5})\.HK\b/i)?.[1]
+  const hkHinted = /港股|港币|HKD|香港/.test(compact) ? compact.match(/\b(0?\d{4})\b/)?.[1] : undefined
+  const hkBare = !aShareCode ? compact.match(/\b(0\d{3})\b/)?.[1] : undefined
+  const rawHK = hkExplicit ?? hkHinted ?? hkBare
+  const market = aShareCode ? (aShareCode.startsWith('6') || aShareCode.startsWith('5') ? 'SH' : 'SZ') : rawHK ? 'HK' : undefined
+  const code = aShareCode ?? (rawHK ? normalizeHKCode(rawHK) : undefined)
   const side = /买入/.test(compact) ? 'buy' : /卖出/.test(compact) ? 'sell' : undefined
   const quantity = numberFrom(compact.match(/(?:已成交|委托数量)\s*([\d,]+)\s*股/)?.[1])
   const localPrice = numberFrom(compact.match(/成交价格\s*[:：]?\s*([\d,]+(?:\.\d+)?)\s*元/)?.[1])
@@ -57,5 +64,10 @@ export function parseExecutionScreenshot(lines: OCRLine[]): ExecutionScreenshotD
     }
   }
 
-  return { code, name, side, quantity, localPrice, settlementYuan, grossYuan, executedAt, warnings }
+  return { code, market, name, side, quantity, localPrice, settlementYuan, grossYuan, executedAt, warnings }
+}
+
+function normalizeHKCode(raw: string) {
+  const digits = raw.replace(/\.HK$/i, '').replace(/^0+/, '')
+  return `${digits.padStart(4, '0')}.HK`
 }

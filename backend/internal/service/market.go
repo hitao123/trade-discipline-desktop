@@ -73,20 +73,22 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 	}()
 	for _, kind := range []market.RankingKind{market.KindStock, market.KindETF} {
 		quotes, err := s.marketProvider.FetchRankings(ctx, kind)
-		if err != nil {
+		quality := market.AssessCloseRanking(attemptedAt, kind, quotes)
+		if err != nil || quality.Quality != market.RankingQualityVerifiedClose {
 			if s.rankingFallback == nil {
-				result.Errors[string(kind)] = "成交额榜单暂未更新"
+				result.Errors[string(kind)] = "成交额榜单未通过收盘完整性校验，已保留本地缓存"
 				result.Health[string(kind)] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "PRIMARY_TEMPORARY_FAILURE"}
 				continue
 			}
 			quotes, err = s.rankingFallback.FetchRankings(ctx, kind)
-			if err != nil {
-				result.Errors[string(kind)] = "主、备用成交额榜单来源均暂不可用"
+			quality = market.AssessCloseRanking(attemptedAt, kind, quotes)
+			if err != nil || quality.Quality != market.RankingQualityVerifiedClose {
+				result.Errors[string(kind)] = "主、备用成交额榜单均未通过收盘完整性校验，已保留本地缓存"
 				result.Health[string(kind)] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "FALLBACK_FAILURE"}
 				continue
 			}
 		}
-		row, err := s.store.SaveMarketSnapshot(ctx, kind, quotes, rankingSource(quotes), attemptedAt)
+		row, err := s.store.SaveMarketSnapshotWithQuality(ctx, kind, quotes, rankingSource(quotes), attemptedAt, quality)
 		if err != nil {
 			result.Errors[string(kind)] = err.Error()
 			continue

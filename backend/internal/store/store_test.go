@@ -37,7 +37,7 @@ func openLegacyTestStore(t *testing.T) *Store {
 		query string
 		args  []any
 	}{
-		{`UPDATE user_profiles SET mode='legacy', onboarding_status='completed', investable_capital_fen=20000000, max_loss_fen=2000000, holding_horizon='legacy_unspecified', enabled_markets_json='["ashare_stock","ashare_etf","hk"]', completed_at=?, updated_at=? WHERE id='local-user'`, []any{stamp, stamp}},
+		{`UPDATE user_profiles SET mode='generic', onboarding_status='completed', investable_capital_fen=20000000, max_loss_fen=2000000, holding_horizon='6_to_12m', enabled_markets_json='["ashare_stock","ashare_etf","hk"]', completed_at=?, updated_at=? WHERE id='local-user'`, []any{stamp, stamp}},
 		{`INSERT INTO accounts(id, name, base_currency, initial_capital_fen, enabled_at, status) VALUES('account-main','我的纪律账户','CNY',20000000,?,'active')`, []any{stamp}},
 		{`INSERT INTO rule_versions(id, version, snapshot_json, change_reason, created_at, previous_id) VALUES('rule-1',1,?,'初始交易纪律规则',?,NULL)`, []any{string(raw), stamp}},
 		{`INSERT INTO instruments(id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status) VALUES('hk-0700','HK','0700.HK','腾讯控股','stock','HKD',100,'legacy_fixture',1,0,'active')`, nil},
@@ -119,7 +119,7 @@ func TestMigrationMarksExistingDatabaseLegacyWithoutChangingFacts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.Mode != domain.UserModeLegacy || profile.OnboardingStatus != domain.OnboardingCompleted {
+	if profile.Mode != domain.UserModeGeneric || profile.OnboardingStatus != domain.OnboardingCompleted {
 		t.Fatalf("profile=%#v", profile)
 	}
 	var accounts, versions int

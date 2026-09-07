@@ -4,9 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
+
+var ErrReviewPeriodExists = errors.New("该周期已经提交过复盘")
 
 type ReviewMetrics struct {
 	CashFen              int64 `json:"cashFen"`
@@ -43,6 +47,9 @@ func (s *Store) SaveWeeklyReview(ctx context.Context, row WeeklyReviewRow) (Week
 	stamp := row.SubmittedAt.UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `INSERT INTO weekly_reviews(id, period_start, period_end, auto_metrics_json, user_content_json, discipline_score_bp, submitted_at, rule_version_id) VALUES(?,?,?,?,?,?,?,?)`, row.ID, row.PeriodStart, row.PeriodEnd, string(metrics), string(content), row.DisciplineScoreBP, stamp, row.RuleVersionID)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return WeeklyReviewRow{}, ErrReviewPeriodExists
+		}
 		return WeeklyReviewRow{}, fmt.Errorf("insert review: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'weekly_review', ?, 'submitted', NULL, ?, ?)`, NewID("audit"), row.ID, string(content), stamp); err != nil {
@@ -52,6 +59,27 @@ func (s *Store) SaveWeeklyReview(ctx context.Context, row WeeklyReviewRow) (Week
 		return WeeklyReviewRow{}, fmt.Errorf("commit review: %w", err)
 	}
 	return row, nil
+}
+
+func (s *Store) WeeklyReviewByPeriod(ctx context.Context, periodStart, periodEnd string) (*WeeklyReviewRow, error) {
+	var row WeeklyReviewRow
+	var metrics, content, submitted string
+	err := s.db.QueryRowContext(ctx, `SELECT id, period_start, period_end, auto_metrics_json, user_content_json, discipline_score_bp, rule_version_id, submitted_at FROM weekly_reviews WHERE period_start=? AND period_end=?`, periodStart, periodEnd).
+		Scan(&row.ID, &row.PeriodStart, &row.PeriodEnd, &metrics, &content, &row.DisciplineScoreBP, &row.RuleVersionID, &submitted)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load period review: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metrics), &row.Metrics); err != nil {
+		return nil, fmt.Errorf("decode review metrics: %w", err)
+	}
+	if err := json.Unmarshal([]byte(content), &row.UserContent); err != nil {
+		return nil, fmt.Errorf("decode review content: %w", err)
+	}
+	row.SubmittedAt, _ = time.Parse(time.RFC3339Nano, submitted)
+	return &row, nil
 }
 
 func (s *Store) LatestWeeklyReview(ctx context.Context) (*WeeklyReviewRow, error) {

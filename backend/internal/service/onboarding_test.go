@@ -21,7 +21,8 @@ func TestUpdateUserProfileCreatesRuleVersionWithoutChangingAccountCash(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.InvestableCapitalFen != 30_000_000 || profile.MaxLossFen != 2_500_000 {
+	// 资金基准只通过资金变动维护，资料更新不改变本金，只更新损失上限等偏好。
+	if profile.InvestableCapitalFen != 20_000_000 || profile.MaxLossFen != 2_500_000 {
 		t.Fatalf("profile=%#v", profile)
 	}
 	versions, err := svc.ListRuleVersions(context.Background())

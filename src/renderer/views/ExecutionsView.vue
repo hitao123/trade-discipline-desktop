@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, shallowRef } from 'vue'
+import { onMounted, ref, shallowRef } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import ExecutionCorrectionPanel from '@/renderer/components/executions/ExecutionCorrectionPanel.vue'
 import ExecutionHistory from '@/renderer/components/executions/ExecutionHistory.vue'
 import ExecutionForm from '@/renderer/components/executions/ExecutionForm.vue'
 import ExecutionScreenshotImport from '@/renderer/components/executions/ExecutionScreenshotImport.vue'
+import InstrumentRegister from '@/renderer/components/instruments/InstrumentRegister.vue'
 import QuickExecutionForm from '@/renderer/components/executions/QuickExecutionForm.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import { api } from '@/renderer/lib/api'
@@ -25,6 +26,8 @@ const entryMode = shallowRef<'quick' | 'full'>('quick')
 const screenshotPrefill = shallowRef<ExecutionScreenshotPrefill>()
 const executionRecords = shallowRef<ExecutionRecord[]>([])
 const selectedExecution = shallowRef<ExecutionRecord>()
+const formEpoch = ref(0)
+const lastInstrumentId = ref('')
 
 async function loadActiveExecutions() {
   try {
@@ -70,11 +73,18 @@ async function repairCorruptedInstrumentNames(items: Instrument[]) {
   }
 }
 
+function resetEntryForms(instrumentId?: unknown) {
+  lastInstrumentId.value = typeof instrumentId === 'string' ? instrumentId : ''
+  screenshotPrefill.value = undefined
+  formEpoch.value += 1
+}
+
 async function record(payload: Record<string, unknown>) {
   busy.value = true; error.value = ''
   try {
     receipt.value = await api.request<Receipt>('/api/executions', { method: 'POST', body: JSON.stringify(payload) })
     executionRecords.value = await loadActiveExecutions()
+    resetEntryForms(payload.instrumentId)
   }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '成交记录失败' }
   finally { busy.value = false }
@@ -85,6 +95,7 @@ async function recordQuick(payload: Record<string, unknown>) {
   try {
     receipt.value = await api.request<Receipt>('/api/executions/quick', { method: 'POST', body: JSON.stringify(payload) })
     executionRecords.value = await loadActiveExecutions()
+    resetEntryForms(payload.instrumentId)
   }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '极速补录失败' }
   finally { busy.value = false }
@@ -133,10 +144,11 @@ onMounted(load)
 	</div>
     <div class="execution-layout">
 	  <div v-if="entryMode === 'quick'" class="quick-entry">
+        <InstrumentRegister @registered="includeResolvedInstrument" />
         <ExecutionScreenshotImport :instruments="instruments" @instrument-resolved="includeResolvedInstrument" @prefill="screenshotPrefill = $event" />
-        <QuickExecutionForm :instruments="instruments" :plans="plans" :busy="busy" :prefill="screenshotPrefill" @submit="recordQuick" />
+        <QuickExecutionForm :key="formEpoch" :instruments="instruments" :plans="plans" :busy="busy" :prefill="screenshotPrefill" :preferred-instrument-id="lastInstrumentId" @submit="recordQuick" />
       </div>
-      <ExecutionForm v-else :instruments="instruments" :plans="plans" :busy="busy" @submit="record" />
+      <ExecutionForm v-else :key="`full-${formEpoch}`" :instruments="instruments" :plans="plans" :busy="busy" :preferred-instrument-id="lastInstrumentId" @submit="record" />
       <aside v-if="receipt" class="receipt" :class="{ 'receipt--violation': receipt.classification === 'serious_violation' }">
         <p>记录完成</p>
         <h2>{{ receipt.classification === 'reversed' ? '原成交已追加冲正' : receipt.classification === 'serious_violation' ? '严重违规已如实入账' : '成交与计划一致' }}</h2>

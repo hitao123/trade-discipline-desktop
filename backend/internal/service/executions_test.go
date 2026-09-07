@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,7 +107,7 @@ func TestGenericPortfolioCashUsesAccountInsteadOfLatestRuleReferenceCapital(t *t
 	}
 }
 
-func TestPortfolioDerivesTencentGateProgressFromCloseDaysAndLatestReview(t *testing.T) {
+func TestPortfolioDisciplineScoreFromLatestReview(t *testing.T) {
 	svc := openExecutionService(t)
 	plan, err := svc.CreatePlan(context.Background(), validPlanDraft())
 	if err != nil {
@@ -139,7 +140,7 @@ func TestPortfolioDerivesTencentGateProgressFromCloseDaysAndLatestReview(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if portfolio.AlibabaObservationTradingDays != 20 || portfolio.DisciplineScoreBP != 10_000 {
+	if portfolio.DisciplineScoreBP != 10_000 {
 		t.Fatalf("unexpected discipline progress: %#v", portfolio)
 	}
 }
@@ -156,10 +157,16 @@ func TestUnplannedExecutionUpdatesHoldingAndCreatesCooldown(t *testing.T) {
 	if receipt.Classification != "serious_violation" || receipt.Position.Quantity != 100 || receipt.Cooldown == nil || receipt.Cooldown.ExpectedEndsAt.IsZero() {
 		t.Fatalf("unexpected receipt: %#v", receipt)
 	}
-	for table, expected := range map[string]int{"execution_events": 1, "violation_events": 1, "cooldown_periods": 1, "audit_events": 1} {
+	for query, expected := range map[string]int{
+		"SELECT count(*) FROM execution_events":                           1,
+		"SELECT count(*) FROM violation_events":                           1,
+		"SELECT count(*) FROM cooldown_periods":                           1,
+		"SELECT count(*) FROM audit_events WHERE entity_type='execution'": 1,
+		"SELECT count(*) FROM post_trade_reviews WHERE status='pending'":  1,
+	} {
 		var count int
-		if err := svc.store.DB().QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != expected {
-			t.Fatalf("%s count=%d err=%v", table, count, err)
+		if err := svc.store.DB().QueryRow(query).Scan(&count); err != nil || count != expected {
+			t.Fatalf("%s count=%d err=%v", query, count, err)
 		}
 	}
 }
@@ -290,14 +297,14 @@ func TestCorrectExecutionAtomicallyReplacesFactAndCurrentDisciplineState(t *test
 		t.Fatal(err)
 	}
 	corrected, err := svc.CorrectExecution(context.Background(), recorded.ID, "成交数量录错", ExecutionDraft{
-		InstrumentID: "hk-9988", Side: "buy", Quantity: 80, LocalPriceMinor: 12_000,
-		LocalPriceTenThousandth: 1_200_000, LocalAmountMinor: 960_000, SettlementFen: -964_000,
+		InstrumentID: "hk-9988", Side: "buy", Quantity: 200, LocalPriceMinor: 12_000,
+		LocalPriceTenThousandth: 1_200_000, LocalAmountMinor: 2_400_000, SettlementFen: -2_410_000,
 		ExecutedAt: time.Date(2026, 8, 12, 7, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if corrected.Position.Quantity != 80 || corrected.CashFen != 19_036_000 || !corrected.PendingReview {
+	if corrected.Position.Quantity != 200 || corrected.CashFen != 17_590_000 || !corrected.PendingReview {
 		t.Fatalf("corrected receipt=%#v", corrected)
 	}
 	for query, want := range map[string]int{
@@ -312,5 +319,91 @@ func TestCorrectExecutionAtomicallyReplacesFactAndCurrentDisciplineState(t *test
 		if err := svc.store.DB().QueryRow(query).Scan(&got); err != nil || got != want {
 			t.Fatalf("query=%s got=%d want=%d err=%v", query, got, want, err)
 		}
+	}
+}
+
+func TestOddLotExecutionIsRejected(t *testing.T) {
+	svc := openExecutionService(t)
+	_, err := svc.RecordExecution(context.Background(), ExecutionDraft{
+		InstrumentID: "hk-9988", Side: "buy", Quantity: 80, LocalPriceMinor: 12_000, LocalAmountMinor: 960_000, SettlementFen: -964_000,
+	})
+	if err == nil || !strings.Contains(err.Error(), "整数倍") {
+		t.Fatalf("expected lot-size rejection, got %v", err)
+	}
+}
+
+func TestCNYSettlementMismatchIsRejected(t *testing.T) {
+	svc := openExecutionService(t)
+	if _, err := svc.store.DB().Exec(`INSERT INTO instruments(id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status)
+		VALUES('sh-510300','SH','510300','沪深300ETF','etf','CNY',100,'test',0,0,'active')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.RecordExecution(context.Background(), ExecutionDraft{
+		InstrumentID: "sh-510300", Side: "buy", Quantity: 100, LocalPriceMinor: 100, LocalAmountMinor: 10_000, SettlementFen: -50_000,
+	})
+	if err == nil || !strings.Contains(err.Error(), "偏差过大") {
+		t.Fatalf("expected settlement mismatch, got %v", err)
+	}
+}
+
+func TestPressureLossBlocksNewPlanWhenUnrealizedDrawdownIsHigh(t *testing.T) {
+	svc := openExecutionService(t)
+	first, err := svc.CreatePlan(context.Background(), validPlanDraft())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordExecution(context.Background(), ExecutionDraft{
+		PlanID: first.ID, InstrumentID: "hk-9988", Side: "buy", Quantity: 100, SettlementFen: -1_205_000, ExecutedAt: time.Date(2026, 8, 12, 7, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.UpdateQuotes(context.Background(), []market.Quote{{Market: "HK", Code: "9988.HK", CloseMinor: 100, Source: "fixture", SourceTime: time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	draft := validPlanDraft()
+	draft.StressDropBP = 8_000
+	plan, err := svc.CreatePlan(context.Background(), draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status == "qualified" {
+		t.Fatalf("expected stress rejection: %#v", plan.Validation)
+	}
+	found := false
+	for _, finding := range plan.Validation.Findings {
+		if finding.Code == "STRESS_LOSS_RED_LINE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing STRESS_LOSS_RED_LINE: %#v", plan.Validation.Findings)
+	}
+}
+
+func TestCurrencyRateTableConvertsMarketValue(t *testing.T) {
+	svc := openExecutionService(t)
+	current, err := svc.store.CurrentRule(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.CurrencyRatesBP = map[string]int{"CNY": 10_000, "HKD": 8_000}
+	if _, err := svc.store.CreateRuleVersion(context.Background(), "下调港币折算", current, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordExecution(context.Background(), ExecutionDraft{
+		InstrumentID: "hk-9988", Side: "buy", Quantity: 100, SettlementFen: -1_205_000, ExecutedAt: time.Date(2026, 8, 12, 7, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.UpdateQuotes(context.Background(), []market.Quote{{Market: "HK", Code: "9988.HK", CloseMinor: 12_200, Source: "fixture", SourceTime: time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	portfolio, err := svc.Portfolio(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	position := portfolio.Positions["hk-9988"]
+	if position.MarketValueFen != 976_000 {
+		t.Fatalf("expected 12200*100*0.8=976000, got %#v", position)
 	}
 }

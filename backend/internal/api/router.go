@@ -27,7 +27,10 @@ func NewRouter(svc *service.Service, token string) http.Handler {
 	mux.HandleFunc("POST /api/onboarding/complete", router.completeOnboarding)
 	mux.HandleFunc("PUT /api/profile", router.updateProfile)
 	mux.HandleFunc("GET /api/dashboard", router.dashboard)
+	mux.HandleFunc("GET /api/cash-events", router.listCashEvents)
+	mux.HandleFunc("POST /api/cash-events", router.createCashEvent)
 	mux.HandleFunc("GET /api/instruments", router.instruments)
+	mux.HandleFunc("POST /api/instruments", router.registerInstrument)
 	mux.HandleFunc("POST /api/instruments/resolve", router.resolveInstrument)
 	mux.HandleFunc("GET /api/plans", router.listPlans)
 	mux.HandleFunc("POST /api/plans", router.createPlan)
@@ -60,6 +63,8 @@ func NewRouter(svc *service.Service, token string) http.Handler {
 	mux.HandleFunc("GET /api/audit", router.audit)
 	mux.HandleFunc("POST /api/market/refresh", router.refreshMarket)
 	mux.HandleFunc("GET /api/market/snapshots/latest", router.latestMarket)
+	mux.HandleFunc("GET /api/market/rankings/dates", router.rankingDates)
+	mux.HandleFunc("GET /api/market/rankings/compare", router.rankingComparison)
 	mux.HandleFunc("POST /api/market/live/refresh", router.refreshLiveMarket)
 	mux.HandleFunc("GET /api/market/live/latest", router.latestLiveMarket)
 	mux.HandleFunc("GET /api/market/refresh-status", router.marketRefreshStatus)
@@ -68,6 +73,7 @@ func NewRouter(svc *service.Service, token string) http.Handler {
 	mux.HandleFunc("POST /api/market/history/refresh", router.refreshMarketHistory)
 	mux.HandleFunc("POST /api/market/csv/preview", router.previewMarketCSV)
 	mux.HandleFunc("POST /api/market/csv/confirm", router.confirmMarketCSV)
+	mux.HandleFunc("GET /api/reviews", router.getReview)
 	mux.HandleFunc("GET /api/reviews/current", router.latestReview)
 	mux.HandleFunc("POST /api/reviews", router.createReview)
 	mux.HandleFunc("GET /api/watchlist", router.listWatchlist)
@@ -130,7 +136,7 @@ func (rt *Router) completeOnboarding(w http.ResponseWriter, r *http.Request) {
 			writeFailure(w, http.StatusUnprocessableEntity, code, err.Error(), nil)
 			return
 		}
-		writeResult(w, data, err, http.StatusCreated)
+		writeFailure(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 	writeSuccess(w, http.StatusCreated, data)
@@ -163,6 +169,21 @@ func (rt *Router) dashboard(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, data, err, http.StatusOK)
 }
 
+func (rt *Router) listCashEvents(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.ListCashEvents(r.Context())
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) createCashEvent(w http.ResponseWriter, r *http.Request) {
+	var input service.CashEventDraft
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_CASH_EVENT", "资金变动格式无效", nil)
+		return
+	}
+	data, err := rt.service.RecordCashEvent(r.Context(), input)
+	writeResult(w, data, err, http.StatusCreated)
+}
+
 func (rt *Router) instruments(w http.ResponseWriter, r *http.Request) {
 	data, err := rt.service.Instruments(r.Context())
 	writeResult(w, data, err, http.StatusOK)
@@ -170,14 +191,25 @@ func (rt *Router) instruments(w http.ResponseWriter, r *http.Request) {
 
 func (rt *Router) resolveInstrument(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Code string `json:"code"`
+		Code   string `json:"code"`
+		Market string `json:"market,omitempty"`
 	}
 	if err := decodeJSON(r, &input); err != nil {
 		writeFailure(w, http.StatusBadRequest, "INVALID_INSTRUMENT_CODE", "证券代码格式无效", nil)
 		return
 	}
-	data, err := rt.service.ResolveInstrument(r.Context(), input.Code)
+	data, err := rt.service.ResolveInstrument(r.Context(), input.Code, input.Market)
 	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) registerInstrument(w http.ResponseWriter, r *http.Request) {
+	var input service.RegisterInstrumentInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeFailure(w, http.StatusBadRequest, "INVALID_INSTRUMENT", "证券登记格式无效", nil)
+		return
+	}
+	data, err := rt.service.RegisterInstrument(r.Context(), input)
+	writeResult(w, data, err, http.StatusCreated)
 }
 
 func (rt *Router) listPlans(w http.ResponseWriter, r *http.Request) {
@@ -430,6 +462,38 @@ func (rt *Router) latestMarket(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, data, err, http.StatusOK)
 }
 
+func parseRankingKind(value string) (market.RankingKind, bool) {
+	kind := market.RankingKind(strings.TrimSpace(value))
+	return kind, kind == market.KindStock || kind == market.KindETF
+}
+
+func (rt *Router) rankingDates(w http.ResponseWriter, r *http.Request) {
+	kind, ok := parseRankingKind(r.URL.Query().Get("kind"))
+	if !ok {
+		writeFailure(w, http.StatusBadRequest, "INVALID_RANKING_KIND", "榜单类型仅支持 stock 或 etf", FieldError{"kind": "请选择股票或 ETF"})
+		return
+	}
+	data, err := rt.service.RankingDates(r.Context(), kind)
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func (rt *Router) rankingComparison(w http.ResponseWriter, r *http.Request) {
+	kind, ok := parseRankingKind(r.URL.Query().Get("kind"))
+	date := r.URL.Query().Get("date")
+	if !ok || (date != "" && !validISODate(date)) {
+		writeFailure(w, http.StatusBadRequest, "INVALID_RANKING_QUERY", "榜单历史参数无效", FieldError{"kind": "请选择股票或 ETF", "date": "日期格式应为 YYYY-MM-DD"})
+		return
+	}
+	data, err := rt.service.RankingComparison(r.Context(), kind, date)
+	if err != nil && strings.Contains(err.Error(), "该日期没有本地榜单") {
+		writeFailure(w, http.StatusNotFound, "RANKING_DATE_NOT_FOUND", err.Error(), nil)
+		return
+	}
+	writeResult(w, data, err, http.StatusOK)
+}
+
+func validISODate(value string) bool { _, err := time.Parse("2006-01-02", value); return err == nil }
+
 func (rt *Router) refreshLiveMarket(w http.ResponseWriter, r *http.Request) {
 	data, err := rt.service.RefreshLiveMarket(r.Context())
 	writeResult(w, data, err, http.StatusCreated)
@@ -526,6 +590,11 @@ func (rt *Router) confirmMarketCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := rt.service.ConfirmMarketCSV(r.Context(), input.Preview, input.Digest)
 	writeResult(w, data, err, http.StatusCreated)
+}
+
+func (rt *Router) getReview(w http.ResponseWriter, r *http.Request) {
+	data, err := rt.service.WeeklyReview(r.Context(), r.URL.Query().Get("periodStart"), r.URL.Query().Get("periodEnd"))
+	writeResult(w, data, err, http.StatusOK)
 }
 
 func (rt *Router) latestReview(w http.ResponseWriter, r *http.Request) {

@@ -11,14 +11,17 @@ import (
 )
 
 type MarketSnapshotRow struct {
-	ID        string              `json:"id"`
-	TradeDate string              `json:"tradeDate"`
-	Kind      market.RankingKind  `json:"kind"`
-	Mode      market.SnapshotMode `json:"mode"`
-	Source    string              `json:"source"`
-	FetchedAt time.Time           `json:"fetchedAt"`
-	Version   int                 `json:"version"`
-	Entries   []market.Quote      `json:"entries"`
+	ID              string                `json:"id"`
+	TradeDate       string                `json:"tradeDate"`
+	Kind            market.RankingKind    `json:"kind"`
+	Mode            market.SnapshotMode   `json:"mode"`
+	Source          string                `json:"source"`
+	FetchedAt       time.Time             `json:"fetchedAt"`
+	Version         int                   `json:"version"`
+	Entries         []market.Quote        `json:"entries"`
+	Quality         market.RankingQuality `json:"quality"`
+	UniverseVersion string                `json:"universeVersion,omitempty"`
+	QualityReason   string                `json:"qualityReason,omitempty"`
 }
 
 type MarketRefreshStatusRow struct {
@@ -243,16 +246,24 @@ func (s *Store) UpdateQuotes(ctx context.Context, quotes []market.Quote) error {
 }
 
 func (s *Store) SaveMarketSnapshot(ctx context.Context, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
-	return s.SaveMarketSnapshotForMode(ctx, market.SnapshotModeClose, kind, quotes, source, fetchedAt)
+	return s.SaveMarketSnapshotWithQuality(ctx, kind, quotes, source, fetchedAt, market.RankingQualityInfo{Quality: market.RankingQualityLegacyUnverified, Reason: "未提供收盘完整性证明"})
+}
+
+func (s *Store) SaveMarketSnapshotWithQuality(ctx context.Context, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time, quality market.RankingQualityInfo) (MarketSnapshotRow, error) {
+	return s.saveMarketSnapshotWithQuality(ctx, market.SnapshotModeClose, kind, quotes, source, fetchedAt, quality)
 }
 
 func (s *Store) SaveMarketSnapshotForMode(ctx context.Context, mode market.SnapshotMode, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
+	return s.saveMarketSnapshotWithQuality(ctx, mode, kind, quotes, source, fetchedAt, market.RankingQualityInfo{Quality: market.RankingQualityLegacyUnverified, Reason: "非收盘比较快照"})
+}
+
+func (s *Store) saveMarketSnapshotWithQuality(ctx context.Context, mode market.SnapshotMode, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time, quality market.RankingQualityInfo) (MarketSnapshotRow, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("begin market snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	row, err := saveMarketSnapshotTx(ctx, tx, mode, kind, quotes, source, fetchedAt)
+	row, err := saveMarketSnapshotTx(ctx, tx, mode, kind, quotes, source, fetchedAt, quality)
 	if err != nil {
 		return MarketSnapshotRow{}, err
 	}
@@ -274,7 +285,7 @@ func (s *Store) SaveMarketBatch(ctx context.Context, groups map[market.RankingKi
 		if len(quotes) == 0 {
 			continue
 		}
-		row, err := saveMarketSnapshotTx(ctx, tx, market.SnapshotModeClose, kind, quotes, source, fetchedAt)
+		row, err := saveMarketSnapshotTx(ctx, tx, market.SnapshotModeClose, kind, quotes, source, fetchedAt, market.RankingQualityInfo{Quality: market.RankingQualityManualUnverified, Reason: "CSV 导入未验证完整市场范围"})
 		if err != nil {
 			return nil, err
 		}
@@ -289,7 +300,7 @@ func (s *Store) SaveMarketBatch(ctx context.Context, groups map[market.RankingKi
 	return result, nil
 }
 
-func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotMode, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time) (MarketSnapshotRow, error) {
+func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotMode, kind market.RankingKind, quotes []market.Quote, source string, fetchedAt time.Time, quality market.RankingQualityInfo) (MarketSnapshotRow, error) {
 	if mode != market.SnapshotModeClose && mode != market.SnapshotModeLive {
 		return MarketSnapshotRow{}, fmt.Errorf("unsupported market snapshot mode %q", mode)
 	}
@@ -318,9 +329,15 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotM
 	if _, err := tx.ExecContext(ctx, `INSERT INTO market_snapshots(id, trade_date, ranking_kind, snapshot_mode, source, fetched_at, status, version) VALUES(?,?,?,?,?,?,'success',?)`, id, tradeDate, kind, mode, source, stamp, version); err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("insert market snapshot: %w", err)
 	}
+	if quality.Quality == "" {
+		quality.Quality = market.RankingQualityLegacyUnverified
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO market_snapshot_quality(snapshot_id, comparison_quality, universe_version, quality_reason) VALUES(?,?,?,?)`, id, quality.Quality, quality.UniverseVersion, quality.Reason); err != nil {
+		return MarketSnapshotRow{}, fmt.Errorf("save market snapshot quality: %w", err)
+	}
 	for index, quote := range eligibleQuotes {
-		currency := "CNY"
-		lotSize := 100
+		currency := market.CurrencyForMarket(quote.Market)
+		lotSize := market.DefaultLotSize(quote.Market)
 		instrumentID := quote.Market + "-" + quote.Code
 		_, err := tx.ExecContext(ctx, `INSERT INTO instruments(id, market, code, name, asset_type, currency, lot_size, lot_source, is_china_tech, is_st, status, latest_price_minor, latest_price_at, latest_price_source)
 			VALUES(?,?,?,?,?,?,?,'market',0,0,'active',?,?,?)
@@ -336,7 +353,7 @@ func saveMarketSnapshotTx(ctx context.Context, tx *sql.Tx, mode market.SnapshotM
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'market_snapshot', ?, 'imported', NULL, ?, ?)`, NewID("audit"), id, fmt.Sprintf(`{"kind":%q,"rows":%d}`, kind, len(eligibleQuotes)), stamp); err != nil {
 		return MarketSnapshotRow{}, fmt.Errorf("audit market snapshot: %w", err)
 	}
-	return MarketSnapshotRow{ID: id, TradeDate: tradeDate, Kind: kind, Mode: mode, Source: source, FetchedAt: fetchedAt.UTC(), Version: version, Entries: eligibleQuotes}, nil
+	return MarketSnapshotRow{ID: id, TradeDate: tradeDate, Kind: kind, Mode: mode, Source: source, FetchedAt: fetchedAt.UTC(), Version: version, Entries: eligibleQuotes, Quality: quality.Quality, UniverseVersion: quality.UniverseVersion, QualityReason: quality.Reason}, nil
 }
 
 func (s *Store) LatestMarketSnapshot(ctx context.Context, kind market.RankingKind) (MarketSnapshotRow, error) {
@@ -346,7 +363,7 @@ func (s *Store) LatestMarketSnapshot(ctx context.Context, kind market.RankingKin
 func (s *Store) LatestMarketSnapshotForMode(ctx context.Context, mode market.SnapshotMode, kind market.RankingKind) (MarketSnapshotRow, error) {
 	var row MarketSnapshotRow
 	var fetched string
-	err := s.db.QueryRowContext(ctx, `SELECT id, trade_date, source, fetched_at, version FROM market_snapshots WHERE ranking_kind=? AND snapshot_mode=? AND status='success' ORDER BY trade_date DESC, version DESC LIMIT 1`, kind, mode).Scan(&row.ID, &row.TradeDate, &row.Source, &fetched, &row.Version)
+	err := s.db.QueryRowContext(ctx, `SELECT s.id, s.trade_date, s.source, s.fetched_at, s.version, COALESCE(q.comparison_quality,'legacy_unverified'), COALESCE(q.universe_version,''), COALESCE(q.quality_reason,'历史快照缺少完整性证明') FROM market_snapshots s LEFT JOIN market_snapshot_quality q ON q.snapshot_id=s.id WHERE s.ranking_kind=? AND s.snapshot_mode=? AND s.status='success' ORDER BY s.trade_date DESC, s.version DESC LIMIT 1`, kind, mode).Scan(&row.ID, &row.TradeDate, &row.Source, &fetched, &row.Version, &row.Quality, &row.UniverseVersion, &row.QualityReason)
 	if err == sql.ErrNoRows {
 		row.Kind = kind
 		row.Mode = mode

@@ -55,7 +55,7 @@ function submit() {
       instrumentId: form.instrumentId, side: form.side, quantity,
       localPriceMinor: Math.round(localPrice * 100), localPriceTenThousandth: Math.round(localPrice * 10_000),
       localAmountMinor: Math.round(localPrice * quantity * 100), settlementFen,
-      executedAt: new Date(form.executedAt).toISOString(), planId: form.planId,
+      executedAt: new Date(form.executedAt).toISOString(), planId: form.planId || undefined,
       exitCode: form.exitCode, evidence: form.evidence, brokerReference: form.brokerReference,
       emotion: { fearScore: Number(form.fearScore), greedScore: Number(form.greedScore), revengeScore: Number(form.revengeScore) },
     },

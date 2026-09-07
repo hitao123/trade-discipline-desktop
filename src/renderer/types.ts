@@ -44,7 +44,7 @@ export interface PlanRecord {
   id: string
   ruleVersionId: string
   status: 'draft' | 'qualified' | 'rejected' | 'expired' | 'executed' | 'cancelled'
-  draft: Record<string, unknown> & { code?: string; quantity?: number; thesis?: string }
+  draft: Record<string, unknown> & { code?: string; quantity?: number; thesis?: string; validUntil?: string }
   validation: { savable: boolean; qualified: boolean; findings: RuleFinding[]; metrics: Record<string, number> }
 }
 
@@ -139,6 +139,17 @@ export interface PriceAlert {
   notifiedAt?: string
 }
 
+export type CashEventType = 'deposit' | 'withdrawal' | 'dividend' | 'reversal'
+
+export interface CashEvent {
+  id: string
+  eventType: CashEventType
+  amountFen: number
+  reason: string
+  occurredAt: string
+  originalEventId?: string
+}
+
 export interface Dashboard {
   profileMode: UserMode
   initialCapitalFen: number
@@ -175,7 +186,32 @@ export interface MarketSnapshot {
   fetchedAt: string
   version: number
   entries: MarketQuote[]
+	quality?: 'verified_close' | 'legacy_unverified' | 'manual_unverified' | 'incomplete'
+	universeVersion?: string
+	qualityReason?: string
 }
+
+export interface RankingDate { tradeDate: string, quality: NonNullable<MarketSnapshot['quality']> }
+export interface RankingComparisonEntry {
+  quote: MarketQuote
+  rank: number
+  previousRank: number | null
+  rankDelta: number | null
+  changeState: 'up' | 'down' | 'unchanged' | 'new' | 'unknown'
+  streakDays: number | null
+  streakExact: boolean
+  streakReason?: string
+}
+export interface RankingComparison {
+  snapshot: MarketSnapshot | null
+  baselineDate: string | null
+  baselineSnapshotId: string | null
+  quality?: NonNullable<MarketSnapshot['quality']>
+  universeVersion?: string
+  reason?: 'no_history' | 'unverified' | 'missing_baseline' | 'calendar_unknown' | 'universe_changed'
+  entries: RankingComparisonEntry[]
+}
+export interface RankingDatesResult { kind: 'stock' | 'etf', dates: RankingDate[], latestDate?: string }
 
 export type MarketHealthState = 'live' | 'delayed' | 'cached' | 'unavailable'
 
@@ -264,9 +300,10 @@ export interface RuleVersion {
     initialCapitalFen: number
     lossCautionFen: number
     lossRedLineFen: number
-    chinaTechLimitFen: number
-    enforceTencentSequenceGate?: boolean
-    tencentObservationDays?: number
+    chinaTechLimitFen?: number
+    currencyRatesBP?: Record<string, number>
+    hkdCnyRateBP?: number
+    noAddToLosingInstrument?: boolean
     minimumDisciplineScoreBP?: number
   }
   reason: string

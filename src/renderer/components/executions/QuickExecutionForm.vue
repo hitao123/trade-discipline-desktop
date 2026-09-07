@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 
+import { activeQualifiedPlans, preferredInstrumentId } from '@/renderer/lib/plan-options'
 import { dateTimeLocal, formatPrice } from '@/renderer/lib/format'
 import type { ExecutionScreenshotPrefill } from '@/renderer/lib/execution-screenshot'
 import type { Instrument, PlanRecord } from '@/renderer/types'
@@ -10,6 +11,7 @@ interface Props {
   plans: PlanRecord[]
   busy: boolean
   prefill?: ExecutionScreenshotPrefill | undefined
+  preferredInstrumentId?: string
 }
 
 interface Emits {
@@ -36,6 +38,7 @@ const form = reactive({
 })
 
 const selected = computed(() => props.instruments.find(item => item.id === form.instrumentId))
+const qualifiedPlans = computed(() => activeQualifiedPlans(props.plans))
 const localPriceMinor = computed(() => Math.round(Number(form.localPrice || 0) * 100))
 const localPriceTenThousandth = computed(() => Math.round(Number(form.localPrice || 0) * 10_000))
 const localAmountMinor = computed(() => Math.round(Number(form.localPrice || 0) * Number(form.quantity || 0) * 100))
@@ -43,14 +46,17 @@ const localAmountLabel = computed(() => formatPrice(localAmountMinor.value, sele
 const priceStep = computed(() => selected.value?.assetType === 'etf' ? 0.001 : 0.01)
 
 watch(() => props.instruments, (items) => {
-  const preferred = items.find(item => item.code === '9988.HK') ?? items[0]
-  if (!form.instrumentId && preferred) form.instrumentId = preferred.id
+  if (!form.instrumentId)
+    form.instrumentId = preferredInstrumentId(items, props.preferredInstrumentId)
 }, { immediate: true })
 
-watch(selected, (instrument) => {
+watch(selected, (instrument, previous) => {
   if (!instrument) return
   form.quantity = instrument.lotSize
-  form.settlementYuan = instrument.currency === 'CNY' ? localAmountMinor.value / 100 : null
+  if (instrument.currency === 'CNY')
+    form.settlementYuan = localAmountMinor.value / 100
+  else if (previous)
+    form.settlementYuan = null
 }, { immediate: true, flush: 'sync' })
 
 watch([localAmountMinor, () => selected.value?.currency, () => form.side], ([amount, currency]) => {
@@ -145,7 +151,7 @@ function submit() {
     <details class="optional-details">
       <summary>稍后补充计划、时间和凭证</summary>
       <div class="quick-grid optional-grid">
-        <label class="field"><span>对应计划（可不选）</span><select v-model="form.planId"><option value="">无计划成交</option><option v-for="plan in plans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.status }}</option></select></label>
+        <label class="field"><span>对应计划（可不选）</span><select v-model="form.planId"><option value="">无计划成交</option><option v-for="plan in qualifiedPlans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.status }}</option></select></label>
         <label class="field"><span>成交时间</span><input v-model="form.executedAt" type="datetime-local" step="1" /></label>
         <label class="field"><span>券商成交编号（可选）</span><input v-model="form.brokerReference" /></label>
         <label v-if="form.side === 'sell'" class="field"><span>卖出代码</span><select v-model="form.exitCode"><option value="">暂未补充</option><option value="T">T · 目标/估值退出</option><option value="B">B · 逻辑破坏</option><option value="R">R · 风险退出</option><option value="C">C · 组合约束</option></select></label>

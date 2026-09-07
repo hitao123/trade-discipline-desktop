@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 
+import { preferredInstrumentId } from '@/renderer/lib/plan-options'
 import { dateTimeLocal } from '@/renderer/lib/format'
 import type { Instrument } from '@/renderer/types'
 
-const props = defineProps<{ instruments: Instrument[]; busy: boolean; submitDisabled?: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string }>()
+const props = defineProps<{ instruments: Instrument[]; busy: boolean; submitDisabled?: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string; preferredInstrumentId?: string }>()
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>] }>()
 
 const now = new Date()
@@ -27,20 +28,24 @@ const quantityError = computed(() => {
 })
 
 watch(() => props.instruments, (instruments) => {
-  const preferred = instruments.find(item => item.code === '9988.HK') ?? instruments[0]
-  if (!form.instrumentId && preferred) form.instrumentId = preferred.id
+  if (!form.instrumentId)
+    form.instrumentId = preferredInstrumentId(instruments, props.preferredInstrumentId)
 }, { immediate: true })
 
-watch(selected, (instrument) => {
-  if (!instrument) return
-  form.quantity = instrument.lotSize
-  if (instrument.code === '9988.HK') {
-    form.entryLow = 110; form.entryHigh = 120; form.riskExit = 90; form.targetExitLow = 130; form.targetExitHigh = 140; form.estimatedCost = 12_000; form.maxPlanLoss = 3_600
+watch(() => form.instrumentId, (id, previous) => {
+  const instrument = props.instruments.find(item => item.id === id)
+  if (instrument)
+    form.quantity = instrument.lotSize
+  if (previous && previous !== id) {
+    form.entryLow = 0
+    form.entryHigh = 0
+    form.riskExit = 0
+    form.targetExitLow = 0
+    form.targetExitHigh = 0
+    form.estimatedCost = 0
+    form.maxPlanLoss = 0
   }
-  else if (instrument.code === '0700.HK') {
-    form.entryLow = 440; form.entryHigh = 480; form.riskExit = 360; form.targetExitLow = 520; form.targetExitHigh = 600; form.estimatedCost = 48_000; form.maxPlanLoss = 14_400
-  }
-}, { immediate: true })
+})
 
 watch(() => props.initialDraft, (draft) => {
   if (!draft) return
@@ -100,7 +105,7 @@ function submit() {
   <form class="form-stack" novalidate @submit.prevent="submit">
     <fieldset>
       <legend>01 · 判断</legend>
-      <label class="field"><span>证券</span><select v-model="form.instrumentId"><option v-for="instrument in instruments" :key="instrument.id" :value="instrument.id">{{ instrument.code }} · {{ instrument.name }} · 每手 {{ instrument.lotSize }}</option></select></label>
+      <label class="field"><span>证券</span><select v-model="form.instrumentId" aria-label="证券"><option v-for="instrument in instruments" :key="instrument.id" :value="instrument.id">{{ instrument.code }} · {{ instrument.name }} · 每手 {{ instrument.lotSize }}</option></select></label>
       <label class="field"><span>一句话买入逻辑</span><textarea v-model="form.thesis" rows="2" required /><small>{{ fieldErrors.thesis }}</small></label>
       <div class="field-grid">
         <label class="field"><span>市场可能错在哪里</span><textarea v-model="form.falsification" rows="3" required /></label>
@@ -117,8 +122,8 @@ function submit() {
     <fieldset>
       <legend>02 · 仓位与风险</legend>
       <div class="field-grid field-grid--three">
-        <label class="field"><span>买入下限（本币）</span><input v-model.number="form.entryLow" type="number" min="0" step="0.01" required /></label>
-        <label class="field"><span>买入上限（本币）</span><input v-model.number="form.entryHigh" type="number" min="0" step="0.01" required /></label>
+        <label class="field"><span>买入下限（本币）</span><input v-model.number="form.entryLow" aria-label="买入下限（本币）" type="number" min="0" step="0.01" required /></label>
+        <label class="field"><span>买入上限（本币）</span><input v-model.number="form.entryHigh" aria-label="买入上限（本币）" type="number" min="0" step="0.01" required /></label>
         <label class="field"><span>风险退出价（本币）</span><input v-model.number="form.riskExit" type="number" min="0" step="0.01" required /></label>
       </div>
       <div class="field-grid">

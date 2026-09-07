@@ -68,14 +68,6 @@ func TestEvaluatePlanRejectsNonBoardLotButKeepsDraftSavable(t *testing.T) {
 	assertFinding(t, got, "BOARD_LOT_REQUIRED", SeverityHard)
 }
 
-func TestEvaluatePlanRejectsFirstPositionAboveShareLimit(t *testing.T) {
-	p := validAlibabaPlan()
-	p.Quantity = 200
-	p.EstimatedCostFen = 2_400_000
-	got := EvaluatePlan(fixedNow, initialRule(), emptyPortfolio(), p)
-	assertFinding(t, got, "INSTRUMENT_SHARE_LIMIT", SeverityHard)
-}
-
 func TestEvaluatePlanRejectsUnderstatedEstimatedCost(t *testing.T) {
 	p := validAlibabaPlan()
 	p.EstimatedCostFen = 100_000
@@ -93,52 +85,17 @@ func TestEvaluatePlanRejectsIncompleteTargetExitRange(t *testing.T) {
 func TestEvaluatePlanRejectsAveragingDown(t *testing.T) {
 	state := emptyPortfolio()
 	state.Positions["hk-9988"] = domain.PositionState{InstrumentID: "hk-9988", Quantity: 100, UnrealizedPnLFen: -120_000}
-	got := EvaluatePlan(fixedNow, initialRule(), state, validAlibabaPlan())
+	rule := initialRule()
+	rule.NoAddToLosingInstrument = true
+	got := EvaluatePlan(fixedNow, rule, state, validAlibabaPlan())
 	assertFinding(t, got, "NO_ADD_TO_LOSER", SeverityHard)
-}
-
-func TestEvaluatePlanRejectsCrossInstrumentChinaTechAveraging(t *testing.T) {
-	state := emptyPortfolio()
-	state.ChinaTechUnrealizedPnLFen = -20_000
-	got := EvaluatePlan(fixedNow, initialRule(), state, validTencentPlan())
-	assertFinding(t, got, "NO_CROSS_INSTRUMENT_AVERAGING", SeverityHard)
-}
-
-func TestTencentRequiresTwentyTradingDaysAndScoreNinety(t *testing.T) {
-	state := emptyPortfolio()
-	state.AlibabaObservationTradingDays = 19
-	state.DisciplineScoreBP = 9_100
-	rule := initialRule()
-	rule.EnforceTencentSequenceGate = true
-	got := EvaluatePlan(fixedNow, rule, state, validTencentPlan())
-	assertFinding(t, got, "TENCENT_SEQUENCE_GATE", SeverityHard)
-}
-
-func TestTencentSequenceGateExplainsConfiguredThresholds(t *testing.T) {
-	state := emptyPortfolio()
-	state.AlibabaObservationTradingDays = 14
-	state.DisciplineScoreBP = 8_400
-	rule := initialRule()
-	rule.EnforceTencentSequenceGate = true
-	rule.TencentObservationDays = 15
-	rule.MinimumDisciplineScoreBP = 8_500
-
-	got := EvaluatePlan(fixedNow, rule, state, validTencentPlan())
-	for _, finding := range got.Findings {
-		if finding.Code == "TENCENT_SEQUENCE_GATE" && finding.Message == "腾讯计划需先完成阿里 15 个交易日观察且纪律分不低于 85" {
-			return
-		}
-	}
-	t.Fatalf("configured Tencent gate should show its current thresholds: %#v", got.Findings)
 }
 
 func TestDefaultRuleDoesNotBlockTencentSequence(t *testing.T) {
 	state := emptyPortfolio()
-	state.AlibabaObservationTradingDays = 0
-	state.DisciplineScoreBP = 0
 	got := EvaluatePlan(fixedNow, initialRule(), state, validTencentPlan())
 	if !got.Qualified {
-		t.Fatalf("default Tencent plan should not be blocked by the optional sequence gate: %#v", got)
+		t.Fatalf("generic Tencent plan should qualify: %#v", got)
 	}
 }
 
@@ -150,12 +107,7 @@ func TestQualifiedAlibabaOneLot(t *testing.T) {
 }
 
 func TestQualifiedTencentAfterDisciplineGate(t *testing.T) {
-	state := emptyPortfolio()
-	state.AlibabaObservationTradingDays = 20
-	state.DisciplineScoreBP = 9_000
-	rule := initialRule()
-	rule.EnforceTencentSequenceGate = true
-	got := EvaluatePlan(fixedNow, rule, state, validTencentPlan())
+	got := EvaluatePlan(fixedNow, initialRule(), emptyPortfolio(), validTencentPlan())
 	if !got.Qualified {
 		t.Fatalf("unexpected decision: %#v", got)
 	}
@@ -199,6 +151,7 @@ func TestGenericRuleSkipsPersonalGatesButKeepsCommonDiscipline(t *testing.T) {
 		Quantity:         100,
 		UnrealizedPnLFen: -10_000,
 	}
+	rule.NoAddToLosingInstrument = true
 	got = EvaluatePlan(fixedNow, rule, state, plan)
 	assertFinding(t, got, "NO_ADD_TO_LOSER", SeverityHard)
 
@@ -210,4 +163,15 @@ func TestGenericRuleSkipsPersonalGatesButKeepsCommonDiscipline(t *testing.T) {
 			t.Fatalf("loss message must use configured amount rather than a hard-coded label: %q", finding.Message)
 		}
 	}
+}
+
+func TestEvaluatePlanRejectsStressLossWhenCurrentDrawdownIsHigh(t *testing.T) {
+	state := emptyPortfolio()
+	state.CurrentPressureLossFen = 1_800_000
+	state.CumulativeLossFen = 1_800_000
+	plan := validAlibabaPlan()
+	plan.EstimatedCostFen = 1_200_000
+	plan.StressDropBP = 3_000
+	got := EvaluatePlan(fixedNow, initialRule(), state, plan)
+	assertFinding(t, got, "STRESS_LOSS_RED_LINE", SeverityHard)
 }

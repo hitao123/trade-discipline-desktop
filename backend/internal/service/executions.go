@@ -72,12 +72,15 @@ func (s *Service) prepareExecution(ctx context.Context, draft ExecutionDraft, qu
 	if err := validateExecutionEmotion(draft.Emotion); err != nil {
 		return store.AppendExecutionInput{}, "", "", err
 	}
-	code, _, isChinaTech, err := s.store.Instrument(ctx, draft.InstrumentID)
+	code, lotSize, isChinaTech, err := s.store.Instrument(ctx, draft.InstrumentID)
 	if err != nil {
 		return store.AppendExecutionInput{}, "", "", err
 	}
 	if draft.Quantity <= 0 {
 		return store.AppendExecutionInput{}, "", "", fmt.Errorf("成交数量必须大于 0")
+	}
+	if lotSize > 0 && draft.Quantity%lotSize != 0 {
+		return store.AppendExecutionInput{}, "", "", fmt.Errorf("成交数量必须是当前交易单位 %d 的整数倍", lotSize)
 	}
 	if draft.Side != "buy" && draft.Side != "sell" {
 		return store.AppendExecutionInput{}, "", "", fmt.Errorf("买卖方向无效")
@@ -98,7 +101,9 @@ func (s *Service) prepareExecution(ctx context.Context, draft ExecutionDraft, qu
 	if err != nil {
 		return store.AppendExecutionInput{}, "", "", err
 	}
-	legacyMode := rule.EffectiveProfileMode() == "legacy"
+	if err := validateCNYSettlement(code, draft); err != nil {
+		return store.AppendExecutionInput{}, "", "", err
+	}
 
 	classification := "compliant"
 	violationCode := ""
@@ -137,30 +142,12 @@ func (s *Service) prepareExecution(ctx context.Context, draft ExecutionDraft, qu
 	}
 	if draft.Side == "buy" {
 		position := portfolioBefore.Positions[draft.InstrumentID]
-		maxShares := 0
-		if legacyMode {
-			switch code {
-			case "0700.HK":
-				maxShares = rule.TencentMaxShares
-			case "9988.HK":
-				maxShares = rule.AlibabaMaxShares
-			}
-		}
-		if maxShares > 0 && position.Quantity+draft.Quantity > maxShares {
-			markViolation("INSTRUMENT_SHARE_LIMIT")
-		}
 		if rule.NoAddToLosingInstrument && position.Quantity > 0 && position.UnrealizedPnLFen < 0 {
 			markViolation("NO_ADD_TO_LOSER")
-		}
-		if legacyMode && rule.NoCrossInstrumentAveraging && isChinaTech && portfolioBefore.ChinaTechUnrealizedPnLFen < 0 {
-			markViolation("NO_CROSS_INSTRUMENT_AVERAGING")
 		}
 		actualCost := -draft.SettlementFen
 		if actualCost > portfolioBefore.AvailableCashFen {
 			markViolation("INSUFFICIENT_CASH")
-		}
-		if legacyMode && isChinaTech && portfolioBefore.ChinaTechExposureFen+actualCost > rule.ChinaTechLimitFen {
-			markViolation("CHINA_TECH_EXPOSURE_LIMIT")
 		}
 		if portfolioBefore.CumulativeLossFen >= rule.LossRedLineFen {
 			markViolation("PORTFOLIO_LOSS_RED_LINE")
@@ -220,7 +207,7 @@ func (s *Service) executionReceipt(ctx context.Context, result store.AppendExecu
 	if err != nil {
 		return ExecutionReceipt{}, err
 	}
-	receipt := ExecutionReceipt{ID: result.ExecutionID, Classification: classification, ViolationCode: violationCode, Position: portfolio.Positions[input.Event.InstrumentID], CashFen: portfolio.AvailableCashFen, PendingReview: input.QuickRecord}
+	receipt := ExecutionReceipt{ID: result.ExecutionID, Classification: classification, ViolationCode: violationCode, Position: portfolio.Positions[input.Event.InstrumentID], CashFen: portfolio.AvailableCashFen, PendingReview: input.QuickRecord || input.ViolationCode != "" || input.Event.EventType == domain.ExecutionSell}
 	if input.Cooldown != nil {
 		receipt.Cooldown = &CooldownReceipt{ID: result.CooldownID, Reason: input.Cooldown.Reason, ExpectedEndsAt: input.Cooldown.ExpectedEndsAt}
 	}
@@ -321,7 +308,11 @@ func (s *Service) portfolioFromEvents(ctx context.Context, events []domain.Execu
 	if err != nil {
 		return domain.PortfolioState{}, err
 	}
-	portfolio, err := domain.Replay(initialCashFen, events, nil)
+	cashEvents, err := s.store.LoadCashEvents(ctx)
+	if err != nil {
+		return domain.PortfolioState{}, err
+	}
+	portfolio, err := domain.Replay(initialCashFen, events, cashEvents)
 	if err != nil {
 		return domain.PortfolioState{}, err
 	}
@@ -352,9 +343,11 @@ func (s *Service) portfolioFromEvents(ctx context.Context, events []domain.Execu
 			position.ReferencePriceAt = quote.PriceAt
 			position.ReferencePriceSource = quote.Source
 			position.MarketValueFen = quote.PriceMinor * int64(position.Quantity)
-			if quote.Currency == "HKD" {
-				position.MarketValueFen = position.MarketValueFen * int64(rule.HKDCNYRateBP) / 10_000
+			currency := position.Currency
+			if currency == "" {
+				currency = quote.Currency
 			}
+			position.MarketValueFen = position.MarketValueFen * int64(rule.RateBP(currency)) / 10_000
 			position.UnrealizedPnLFen = position.MarketValueFen - position.CostFen
 			if position.UnrealizedPnLFen < 0 {
 				portfolio.CumulativeLossFen += -position.UnrealizedPnLFen
@@ -366,7 +359,24 @@ func (s *Service) portfolioFromEvents(ctx context.Context, events []domain.Execu
 		}
 		portfolio.Positions[id] = position
 	}
+	portfolio.CurrentPressureLossFen = portfolio.CumulativeLossFen
 	return portfolio, nil
+}
+
+func validateCNYSettlement(code string, draft ExecutionDraft) error {
+	if draft.LocalAmountMinor <= 0 || strings.HasSuffix(strings.ToUpper(code), ".HK") {
+		return nil
+	}
+	expected := draft.LocalAmountMinor
+	actual := absInt64(draft.SettlementFen)
+	tolerance := expected / 100
+	if tolerance < 100 {
+		tolerance = 100
+	}
+	if actual > expected+tolerance || actual+tolerance < expected {
+		return fmt.Errorf("实际人民币金额与本币成交金额偏差过大，请核对券商费用")
+	}
+	return nil
 }
 
 func validExitCode(code string) bool {

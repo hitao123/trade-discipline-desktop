@@ -12,5 +12,6 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/renderer/test/setup.ts'],
+    exclude: ['**/node_modules/**', '**/.worktrees/**', '**/dist/**'],
   },
 })

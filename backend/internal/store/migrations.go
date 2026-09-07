@@ -84,6 +84,12 @@ var migrationStatements = []string{
 		source_time TEXT,
 		UNIQUE(snapshot_id, rank)
 	)`,
+	`CREATE TABLE IF NOT EXISTS market_snapshot_quality (
+		snapshot_id TEXT PRIMARY KEY REFERENCES market_snapshots(id) ON DELETE CASCADE,
+		comparison_quality TEXT NOT NULL CHECK(comparison_quality IN ('verified_close','legacy_unverified','manual_unverified','incomplete')),
+		universe_version TEXT,
+		quality_reason TEXT
+	)`,
 	`CREATE TABLE IF NOT EXISTS market_daily_bar_observations (
 		id TEXT PRIMARY KEY,
 		market TEXT NOT NULL CHECK(market IN ('HK','SH','SZ')),

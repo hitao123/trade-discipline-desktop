@@ -8,30 +8,44 @@ type CooldownRule struct {
 }
 
 type Snapshot struct {
-	Version                    int          `json:"version"`
-	ProfileMode                string       `json:"profileMode,omitempty"`
-	InitialCapitalFen          int64        `json:"initialCapitalFen"`
-	LossCautionFen             int64        `json:"lossCautionFen"`
-	LossRedLineFen             int64        `json:"lossRedLineFen"`
-	ChinaTechLimitFen          int64        `json:"chinaTechLimitFen"`
-	TencentMaxShares           int          `json:"tencentMaxShares"`
-	AlibabaMaxShares           int          `json:"alibabaMaxShares"`
-	HKBoardLot                 int          `json:"hkBoardLot"`
-	HKDCNYRateBP               int          `json:"hkdCnyRateBP"`
-	MinimumDisciplineScoreBP   int          `json:"minimumDisciplineScoreBP"`
-	TencentObservationDays     int          `json:"tencentObservationDays"`
-	EnforceTencentSequenceGate bool         `json:"enforceTencentSequenceGate"`
-	NoAddToLosingInstrument    bool         `json:"noAddToLosingInstrument"`
-	NoCrossInstrumentAveraging bool         `json:"noCrossInstrumentAveraging"`
-	ExitCodes                  []string     `json:"exitCodes"`
-	Cooldown                   CooldownRule `json:"cooldown"`
+	Version                    int            `json:"version"`
+	ProfileMode                string         `json:"profileMode,omitempty"`
+	InitialCapitalFen          int64          `json:"initialCapitalFen"`
+	LossCautionFen             int64          `json:"lossCautionFen"`
+	LossRedLineFen             int64          `json:"lossRedLineFen"`
+	ChinaTechLimitFen          int64          `json:"chinaTechLimitFen,omitempty"`
+	TencentMaxShares           int            `json:"tencentMaxShares,omitempty"`
+	AlibabaMaxShares           int            `json:"alibabaMaxShares,omitempty"`
+	HKBoardLot                 int            `json:"hkBoardLot,omitempty"`
+	HKDCNYRateBP               int            `json:"hkdCnyRateBP,omitempty"`
+	CurrencyRatesBP            map[string]int `json:"currencyRatesBP,omitempty"`
+	MinimumDisciplineScoreBP   int            `json:"minimumDisciplineScoreBP,omitempty"`
+	TencentObservationDays     int            `json:"tencentObservationDays,omitempty"`
+	EnforceTencentSequenceGate bool           `json:"enforceTencentSequenceGate,omitempty"`
+	NoAddToLosingInstrument    bool           `json:"noAddToLosingInstrument"`
+	NoCrossInstrumentAveraging bool           `json:"noCrossInstrumentAveraging,omitempty"`
+	ExitCodes                  []string       `json:"exitCodes"`
+	Cooldown                   CooldownRule   `json:"cooldown"`
 }
 
-func (s Snapshot) EffectiveProfileMode() string {
-	if s.ProfileMode == "generic" {
-		return "generic"
+func (s Snapshot) RateBP(currency string) int {
+	if currency == "" || currency == "CNY" {
+		if s.CurrencyRatesBP != nil {
+			if rate := s.CurrencyRatesBP["CNY"]; rate > 0 {
+				return rate
+			}
+		}
+		return 10_000
 	}
-	return "legacy"
+	if s.CurrencyRatesBP != nil {
+		if rate := s.CurrencyRatesBP[currency]; rate > 0 {
+			return rate
+		}
+	}
+	if currency == "HKD" && s.HKDCNYRateBP > 0 {
+		return s.HKDCNYRateBP
+	}
+	return 10_000
 }
 
 func GenericSnapshot(capitalFen, maxLossFen int64) Snapshot {
@@ -40,31 +54,22 @@ func GenericSnapshot(capitalFen, maxLossFen int64) Snapshot {
 	snapshot.InitialCapitalFen = capitalFen
 	snapshot.LossCautionFen = maxLossFen * 75 / 100
 	snapshot.LossRedLineFen = maxLossFen
-	snapshot.ChinaTechLimitFen = 0
-	snapshot.TencentMaxShares = 0
-	snapshot.AlibabaMaxShares = 0
-	snapshot.EnforceTencentSequenceGate = false
-	snapshot.NoCrossInstrumentAveraging = false
 	return snapshot
 }
 
 func InitialSnapshot() Snapshot {
 	return Snapshot{
-		Version:                    1,
-		InitialCapitalFen:          20_000_000,
-		LossCautionFen:             1_500_000,
-		LossRedLineFen:             2_000_000,
-		ChinaTechLimitFen:          8_000_000,
-		TencentMaxShares:           100,
-		AlibabaMaxShares:           100,
-		HKBoardLot:                 100,
-		HKDCNYRateBP:               9_500,
-		MinimumDisciplineScoreBP:   9_000,
-		TencentObservationDays:     20,
-		EnforceTencentSequenceGate: false,
-		NoAddToLosingInstrument:    true,
-		NoCrossInstrumentAveraging: true,
-		ExitCodes:                  []string{"T", "B", "R", "C"},
+		Version:                  1,
+		ProfileMode:              "generic",
+		InitialCapitalFen:        20_000_000,
+		LossCautionFen:           1_500_000,
+		LossRedLineFen:           2_000_000,
+		HKBoardLot:               100,
+		HKDCNYRateBP:             9_500,
+		CurrencyRatesBP:          map[string]int{"CNY": 10_000, "HKD": 9_500},
+		MinimumDisciplineScoreBP: 9_000,
+		NoAddToLosingInstrument:  false,
+		ExitCodes:                []string{"T", "B", "R", "C"},
 		Cooldown: CooldownRule{
 			FirstSeriousTradingDays:  5,
 			SecondSeriousTradingDays: 20,

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/vue'
+import { render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App.vue'
@@ -50,6 +50,27 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '市场榜单' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '每周复盘' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '规则与设置' })).toBeTruthy()
+  })
+
+  it('deep-links a monitor alert to the positions page', async () => {
+    let handler: ((alertID: string) => void) | undefined
+    Object.defineProperty(window, 'discipline', {
+      configurable: true,
+      value: {
+        onMonitorAlert: (callback: (alertID: string) => void) => {
+          handler = callback
+          return () => { handler = undefined }
+        },
+      },
+    })
+    vi.mocked(api.request).mockResolvedValue(completedProfile)
+    const router = createAppRouter()
+    await router.push('/')
+    await router.isReady()
+    render(App, { global: { plugins: [router], stubs: { RouterView: true } } })
+    await screen.findByRole('link', { name: '持仓' })
+    handler?.('alert-9')
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/positions?alert=alert-9'))
   })
 
   it('offers a retry when the local service cannot be checked', async () => {

@@ -48,9 +48,9 @@ func (s *Service) Dashboard(ctx context.Context) (Dashboard, error) {
 		portfolio.ActiveCooldownUntil = cooldown.ExpectedEndsAt
 		allowedAction = "冷静期内只允许记录、减仓、风险退出和复盘"
 	}
-	initialCapitalFen := profile.InvestableCapitalFen
-	if initialCapitalFen <= 0 {
-		initialCapitalFen = rule.InitialCapitalFen
+	initialCapitalFen, err := s.fundedCapitalFen(ctx)
+	if err != nil {
+		return Dashboard{}, err
 	}
 	return Dashboard{
 		ProfileMode: profile.Mode, InitialCapitalFen: initialCapitalFen, Portfolio: portfolio, LossCautionFen: rule.LossCautionFen,

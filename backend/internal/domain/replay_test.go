@@ -29,6 +29,20 @@ func TestReplayReversalRestoresState(t *testing.T) {
 	}
 }
 
+func TestReplayAppliesCashEventsToAvailableCash(t *testing.T) {
+	state, err := Replay(20_000_000, nil, []CashEvent{
+		{ID: "in-1", AmountFen: 5_000_000},
+		{ID: "out-1", AmountFen: -1_200_000},
+		{ID: "div-1", AmountFen: 8_000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.AvailableCashFen != 23_808_000 {
+		t.Fatalf("available cash=%d", state.AvailableCashFen)
+	}
+}
+
 func TestReplayRejectsSellBeyondHolding(t *testing.T) {
 	_, err := Replay(20_000_000, []ExecutionEvent{
 		{ID: "sell-1", EventType: ExecutionSell, InstrumentID: "hk-9988", Quantity: 100, SettlementFen: 1_200_000, ExitCode: "T"},

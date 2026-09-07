@@ -154,7 +154,7 @@ func appendExecutionTx(ctx context.Context, tx *sql.Tx, input AppendExecutionInp
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id, entity_type, entity_id, action, before_json, after_json, created_at) VALUES(?, 'execution', ?, 'recorded', NULL, ?, ?)`, NewID("audit"), eventID, string(afterJSON), createdAt); err != nil {
 		return AppendExecutionResult{}, fmt.Errorf("audit execution: %w", err)
 	}
-	if input.QuickRecord {
+	if input.QuickRecord || input.ViolationCode != "" || input.Event.EventType == domain.ExecutionSell {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO post_trade_reviews(id, execution_id, status, note, created_at) VALUES(?, ?, 'pending', '', ?)`, NewID("post-review"), eventID, createdAt); err != nil {
 			return AppendExecutionResult{}, fmt.Errorf("create pending post-trade review: %w", err)
 		}

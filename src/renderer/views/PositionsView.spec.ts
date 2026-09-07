@@ -1,10 +1,21 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 import PositionsView from './PositionsView.vue'
 
 const { request } = vi.hoisted(() => ({ request: vi.fn() }))
 vi.mock('@/renderer/lib/api', () => ({ api: { request } }))
+
+async function renderPositions(query = '') {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/positions', component: PositionsView }],
+  })
+  await router.push(`/positions${query}`)
+  await router.isReady()
+  return render(PositionsView, { global: { plugins: [router] } })
+}
 
 describe('PositionsView', () => {
   beforeEach(() => {
@@ -19,7 +30,7 @@ describe('PositionsView', () => {
   })
 
   it('shows monitor status and saves a review for an outstanding key-price alert', async () => {
-    render(PositionsView)
+    await renderPositions()
     expect(await screen.findByText('已触及风险退出线')).toBeTruthy()
     expect(screen.getByText('每 10 分钟检查一次')).toBeTruthy()
     await fireEvent.click(screen.getByLabelText('卖出'))
@@ -46,7 +57,7 @@ describe('PositionsView', () => {
 	  throw new Error(`unexpected ${path}`)
 	})
 
-	render(PositionsView)
+	await renderPositions()
 	expect(await screen.findByText('通信ETF国泰')).toBeTruthy()
 	expect(screen.getByText('515880')).toBeTruthy()
 	await fireEvent.click(screen.getByRole('button', { name: '修正成交' }))
@@ -58,5 +69,10 @@ describe('PositionsView', () => {
 	await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/execution-1/correct', expect.objectContaining({ method: 'POST' })))
 	const call = request.mock.calls.find(([path]) => path === '/api/executions/execution-1/correct')
 	expect(JSON.parse(String(call?.[1]?.body))).toEqual(expect.objectContaining({ reason: '原成交数量录错', draft: expect.objectContaining({ quantity: 80 }) }))
+  })
+
+  it('opens the matching alert when arriving from a notification deep link', async () => {
+    await renderPositions('?alert=alert-1')
+    expect(await screen.findByText('已触及风险退出线')).toBeTruthy()
   })
 })

@@ -39,7 +39,6 @@ type Decision struct {
 
 func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState, plan domain.TradePlanDraft) Decision {
 	decision := Decision{Savable: true, Findings: make([]Finding, 0)}
-	legacyMode := rule.EffectiveProfileMode() == "legacy"
 	add := func(code, field, message string) {
 		decision.Findings = append(decision.Findings, Finding{Code: code, Severity: SeverityHard, Field: field, Message: message})
 	}
@@ -84,7 +83,7 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 	}
 	minimumEstimatedCost := plan.EntryLowMinor * int64(plan.Quantity)
 	if strings.HasSuffix(strings.ToUpper(plan.Code), ".HK") {
-		minimumEstimatedCost = minimumEstimatedCost * int64(rule.HKDCNYRateBP) / 10_000
+		minimumEstimatedCost = minimumEstimatedCost * int64(rule.RateBP("HKD")) / 10_000
 	}
 	if plan.EstimatedCostFen > 0 && minimumEstimatedCost > 0 && plan.EstimatedCostFen < minimumEstimatedCost {
 		add("ESTIMATED_COST_UNDERSTATED", "estimatedCostFen", "预计人民币资金不能低于计划下限价对应的保守折算金额")
@@ -108,39 +107,17 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 		add("ACTIVE_COOLDOWN", "validUntil", "当前冷静期禁止主动开仓")
 	}
 
-	existingQuantity := 0
 	if existing, ok := portfolio.Positions[plan.InstrumentID]; ok {
-		existingQuantity = existing.Quantity
 		if existing.UnrealizedPnLFen < 0 && rule.NoAddToLosingInstrument {
 			add("NO_ADD_TO_LOSER", "quantity", "同一标的浮亏时禁止继续加仓")
 		}
 	}
-	maxShares := 0
-	if legacyMode {
-		switch plan.Code {
-		case "0700.HK":
-			maxShares = rule.TencentMaxShares
-		case "9988.HK":
-			maxShares = rule.AlibabaMaxShares
-		}
-	}
-	if maxShares > 0 && existingQuantity+plan.Quantity > maxShares {
-		add("INSTRUMENT_SHARE_LIMIT", "quantity", "计划后数量超过当前规则的单一证券上限")
-	}
-	if legacyMode && plan.IsChinaTech && portfolio.ChinaTechUnrealizedPnLFen < 0 && rule.NoCrossInstrumentAveraging {
-		add("NO_CROSS_INSTRUMENT_AVERAGING", "instrumentId", "中国科技仓整体浮亏时禁止新增相关风险")
-	}
 
 	pressureLoss := portfolio.CurrentPressureLossFen + plan.EstimatedCostFen*int64(plan.StressDropBP)/10_000
 	maximumLoss := portfolio.CumulativeLossFen + plan.MaxPlanLossFen
-	chinaExposure := portfolio.ChinaTechExposureFen
-	if plan.IsChinaTech {
-		chinaExposure += plan.EstimatedCostFen
-	}
 	decision.Metrics = Metrics{
 		EstimatedCostFen:           plan.EstimatedCostFen,
 		AvailableCashAfterFen:      portfolio.AvailableCashFen - plan.EstimatedCostFen,
-		ChinaTechExposureAfterFen:  chinaExposure,
 		PressureLossAfterFen:       pressureLoss,
 		MaximumPlannedLossAfterFen: maximumLoss,
 	}
@@ -149,12 +126,6 @@ func EvaluatePlan(now time.Time, rule Snapshot, portfolio domain.PortfolioState,
 	}
 	if pressureLoss > rule.LossRedLineFen {
 		add("STRESS_LOSS_RED_LINE", "stressDropBP", fmt.Sprintf("计划后压力损失超过 %.2f 元组合红线", float64(rule.LossRedLineFen)/100))
-	}
-	if legacyMode && chinaExposure > rule.ChinaTechLimitFen {
-		add("CHINA_TECH_EXPOSURE_LIMIT", "estimatedCostFen", fmt.Sprintf("计划后中国科技敞口超过 %.2f 元", float64(rule.ChinaTechLimitFen)/100))
-	}
-	if legacyMode && rule.EnforceTencentSequenceGate && plan.Code == "0700.HK" && (portfolio.AlibabaObservationTradingDays < rule.TencentObservationDays || portfolio.DisciplineScoreBP < rule.MinimumDisciplineScoreBP) {
-		add("TENCENT_SEQUENCE_GATE", "instrumentId", fmt.Sprintf("腾讯计划需先完成阿里 %d 个交易日观察且纪律分不低于 %d", rule.TencentObservationDays, rule.MinimumDisciplineScoreBP/100))
 	}
 
 	decision.Qualified = len(decision.Findings) == 0

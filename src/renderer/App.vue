@@ -24,7 +24,7 @@ const router = useRouter()
 const appState = ref<'loading' | 'error' | 'pending' | 'completed'>('loading')
 const profile = ref<UserProfile | null>(null)
 const loadError = ref('')
-const navigation = computed(() => allNavigation.filter(item => !(item.to === '/market' && profile.value?.mode === 'generic' && profile.value.enabledMarkets.length === 1 && profile.value.enabledMarkets[0] === 'hk')))
+const navigation = computed(() => allNavigation)
 let removeMonitorAlertListener: (() => void) | undefined
 
 function replaceProfile(next: UserProfile) {
@@ -35,7 +35,9 @@ provide(userProfileKey, { profile: computed(() => profile.value), replaceProfile
 
 function startMonitorAlertListener() {
   if (!removeMonitorAlertListener)
-    removeMonitorAlertListener = window.discipline?.onMonitorAlert(() => { void router.push('/positions') })
+    removeMonitorAlertListener = window.discipline?.onMonitorAlert((alertID) => {
+      void router.push({ path: '/positions', query: alertID ? { alert: alertID } : {} })
+    })
 }
 
 async function loadProfile() {
