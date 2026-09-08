@@ -33,6 +33,13 @@ function complete(executionId: string) {
   const note = notes[executionId]?.trim() ?? ''
   if (note) emit('complete', executionId, note)
 }
+
+function emotionLabel(emotion: PostTradeReview['emotion']) {
+  if (emotion?.state === 'unfilled') return '未填写'
+  if (emotion?.state === 'unknown') return '记不清'
+  if (emotion?.state !== 'recorded') return '历史记录未标记'
+  return `恐惧 ${emotion.fearScore} · 贪婪 ${emotion.greedScore} · 回本冲动 ${emotion.revengeScore}`
+}
 </script>
 
 <template>
@@ -56,7 +63,7 @@ function complete(executionId: string) {
           <div><dt>成交均价</dt><dd>{{ executionPrice(review) }}</dd></div>
           <div><dt>实际结算</dt><dd>{{ signedCNY(review.settlementFen) }}</dd></div>
           <div><dt>成交时间</dt><dd>{{ new Date(review.executedAt).toLocaleString('zh-CN', { hour12: false }) }}</dd></div>
-          <div><dt>当时情绪</dt><dd>恐惧 {{ review.emotion?.fearScore ?? 0 }} · 贪婪 {{ review.emotion?.greedScore ?? 0 }} · 回本冲动 {{ review.emotion?.revengeScore ?? 0 }}</dd></div>
+          <div><dt>当时情绪</dt><dd>{{ emotionLabel(review.emotion) }}</dd></div>
         </dl>
       </div>
       <label class="field">

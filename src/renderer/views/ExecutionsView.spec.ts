@@ -44,7 +44,9 @@ describe('ExecutionsView', () => {
 
   it('allows honest recording after a serious violation warning', async () => {
     render(ExecutionsView)
-	  expect(await screen.findByText('无计划也可以如实保存，系统会记入纪律记录。')).toBeTruthy()
+	  expect(await screen.findByText('该证券没有当前合格且未过期的计划；无计划成交仍可保存。')).toBeTruthy()
+	  expect(screen.getByLabelText('我已核对计划关联；未选即为真实无计划成交。')).toBeTruthy()
+	  expect(screen.getByLabelText('我已核对成交日期与时间，不把历史成交记成今天。')).toBeTruthy()
 	  expect(screen.getByRole('button', { name: '立即如实入账' })).toBeEnabled()
 	  expect(screen.getByText('只写事实，不连接券商，也不会下单。')).toBeTruthy()
   })
@@ -98,6 +100,8 @@ describe('ExecutionsView', () => {
 	await screen.findByRole('option', { name: '9988.HK · 阿里巴巴-W' })
 	await fireEvent.update(screen.getByLabelText('成交均价'), '120')
 	await fireEvent.update(screen.getByLabelText('券商实际人民币扣款/到账（元）'), '12050')
+	await fireEvent.click(screen.getByLabelText('我已核对计划关联；未选即为真实无计划成交。'))
+	await fireEvent.click(screen.getByLabelText('我已核对成交日期与时间，不把历史成交记成今天。'))
 	await fireEvent.click(screen.getByRole('button', { name: '立即如实入账' }))
 	expect(await screen.findByText('已加入待复盘')).toBeTruthy()
 	await waitFor(() => expect(request).toHaveBeenCalledWith('/api/executions/quick', expect.objectContaining({ method: 'POST' })))

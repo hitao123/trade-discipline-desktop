@@ -14,6 +14,10 @@ type ExecutionEmotion struct {
 	FearScore    int `json:"fearScore"`
 	GreedScore   int `json:"greedScore"`
 	RevengeScore int `json:"revengeScore"`
+	// State keeps a missing answer distinct from an explicit zero. Empty is
+	// reserved for records written before this field existed and is never
+	// reinterpreted as a score.
+	State string `json:"state,omitempty"`
 }
 
 type ExecutionEvent struct {

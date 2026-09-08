@@ -11,10 +11,12 @@ const emit = defineEmits<{ submit: [payload: Record<string, unknown>] }>()
 const form = reactive({
   planId: '', instrumentId: '', side: 'buy', executedAt: dateTimeLocal(), quantity: 100,
   localPrice: 0, localAmount: 0, settlementYuan: 0, exitCode: '', evidence: '', brokerReference: '',
+  emotionState: 'unfilled' as 'recorded' | 'unfilled' | 'unknown',
   fearScore: 0, greedScore: 0, revengeScore: 0,
 })
 const selected = computed(() => props.instruments.find(item => item.id === form.instrumentId))
 const qualifiedPlans = computed(() => activeQualifiedPlans(props.plans))
+const matchingPlans = computed(() => qualifiedPlans.value.filter(plan => plan.draft.instrumentId === form.instrumentId))
 const noPlan = computed(() => form.planId === '')
 
 watch(() => props.instruments, (items) => {
@@ -31,7 +33,9 @@ function submit() {
     localPriceMinor: Math.round(form.localPrice * 100), localAmountMinor: Math.round(form.localAmount * 100),
     settlementFen: settlement, exitCode: form.exitCode || undefined, evidence: form.evidence || undefined,
     brokerReference: form.brokerReference || undefined,
-    emotion: { fearScore: Number(form.fearScore), greedScore: Number(form.greedScore), revengeScore: Number(form.revengeScore) },
+    emotion: form.emotionState === 'recorded'
+      ? { state: 'recorded', fearScore: Number(form.fearScore), greedScore: Number(form.greedScore), revengeScore: Number(form.revengeScore) }
+      : { state: form.emotionState, fearScore: 0, greedScore: 0, revengeScore: 0 },
   })
 }
 </script>
@@ -39,12 +43,13 @@ function submit() {
 <template>
   <form class="form-stack" @submit.prevent="submit">
     <div class="boundary-note"><strong>这里只补录，不会向券商发送订单</strong><span>请先在券商 App 完成真实交易，再把实际结果写进来。</span></div>
-    <label class="field"><span>对应计划（可不选）</span><select v-model="form.planId" aria-label="对应计划（可不选）"><option value="">无计划成交</option><option v-for="plan in qualifiedPlans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.status }} · {{ plan.draft.quantity }} 股</option></select></label>
+    <label class="field"><span>对应计划（请明确选择）</span><select v-model="form.planId" aria-label="对应计划（请明确选择）"><option value="">无计划成交</option><option v-for="plan in matchingPlans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.status }} · {{ plan.draft.quantity }} 股</option></select><small v-if="!matchingPlans.length">该证券没有当前合格且未过期的计划。</small></label>
     <p v-if="noPlan" class="violation-warning">无计划成交将记为严重违规，但不会阻止保存。</p>
     <div class="field-grid">
       <label class="field"><span>证券</span><select v-model="form.instrumentId"><option v-for="instrument in instruments" :key="instrument.id" :value="instrument.id">{{ instrument.code }} · {{ instrument.name }}</option></select></label>
       <label class="field"><span>买卖方向</span><select v-model="form.side"><option value="buy">买入</option><option value="sell">卖出</option></select></label>
     </div>
+    <div class="emotion-state" role="radiogroup" aria-label="情绪记录状态"><label><input v-model="form.emotionState" type="radio" value="unfilled" />未填写</label><label><input v-model="form.emotionState" type="radio" value="recorded" />如实评分</label><label><input v-model="form.emotionState" type="radio" value="unknown" />记不清</label></div>
     <div class="field-grid field-grid--three">
       <label class="field"><span>成交时间</span><input v-model="form.executedAt" type="datetime-local" required /></label>
       <label class="field"><span>数量</span><input v-model.number="form.quantity" type="number" min="1" step="1" required /><small>当前交易单位 {{ selected?.lotSize ?? 100 }}</small></label>
@@ -59,7 +64,7 @@ function submit() {
       <label class="field"><span>卖出代码 T/B/R/C</span><select v-model="form.exitCode" required><option value="">请选择</option><option value="T">T · 达到目标/估值退出</option><option value="B">B · 逻辑破坏</option><option value="R">R · 风险退出</option><option value="C">C · 组合约束</option></select></label>
       <label class="field"><span>卖出证据</span><textarea v-model="form.evidence" rows="3" required /></label>
     </div>
-    <div class="field-grid field-grid--three">
+    <div v-if="form.emotionState === 'recorded'" class="field-grid field-grid--three">
       <label class="field"><span>害怕 0–10</span><input v-model.number="form.fearScore" aria-label="害怕 0–10" type="number" min="0" max="10" /></label>
       <label class="field"><span>贪婪 0–10</span><input v-model.number="form.greedScore" aria-label="贪婪 0–10" type="number" min="0" max="10" /></label>
       <label class="field"><span>扳本冲动 0–10</span><input v-model.number="form.revengeScore" aria-label="扳本冲动 0–10" type="number" min="0" max="10" /></label>
@@ -75,4 +80,5 @@ function submit() {
 .boundary-note { display: flex; align-items: baseline; gap: 16px; padding: 14px 16px; color: var(--ink-muted); border: 1px solid var(--line); background: var(--paper-deep); font-size: 12px; }
 .boundary-note strong { color: var(--ink); }
 .violation-warning { margin: 0; padding: 12px 14px; color: #812b20; border-left: 3px solid var(--accent); background: #f2dfda; font-size: 13px; }
+.emotion-state { display: flex; flex-wrap: wrap; gap: 14px; }.emotion-state label { display: flex; align-items: center; gap: 6px; font-size: 12px; }.emotion-state input { width: auto; }
 </style>

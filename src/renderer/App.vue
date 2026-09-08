@@ -9,22 +9,22 @@ import type { UserProfile } from '@/renderer/types'
 import OnboardingView from '@/renderer/views/OnboardingView.vue'
 
 const allNavigation = [
-  { to: '/', label: '今日', index: '01' },
-  { to: '/watchlist', label: '观察名单', index: '02' },
-  { to: '/plans', label: '交易计划', index: '03' },
-  { to: '/executions', label: '成交补录', index: '04' },
-  { to: '/positions', label: '持仓', index: '05' },
-  { to: '/allocation', label: '资产配置', index: '06' },
-  { to: '/market', label: '市场榜单', index: '07' },
-  { to: '/reviews', label: '每周复盘', index: '08' },
-  { to: '/settings', label: '规则与设置', index: '09' },
+  { to: '/', label: '今日', index: '01', group: '日常操作' },
+  { to: '/plans', label: '交易计划', index: '02', group: '日常操作' },
+  { to: '/executions', label: '成交补录', index: '03', group: '日常操作' },
+  { to: '/reviews', label: '每周复盘', index: '04', group: '日常操作' },
+  { to: '/positions', label: '持仓', index: '05', group: '查看与研究' },
+  { to: '/watchlist', label: '观察名单', index: '06', group: '查看与研究' },
+  { to: '/market', label: '市场榜单', index: '07', group: '查看与研究' },
+  { to: '/allocation', label: '资产配置', index: '08', group: '规则与数据' },
+  { to: '/settings', label: '规则与设置', index: '09', group: '规则与数据' },
 ]
 
 const router = useRouter()
 const appState = ref<'loading' | 'error' | 'pending' | 'completed'>('loading')
 const profile = ref<UserProfile | null>(null)
 const loadError = ref('')
-const navigation = computed(() => allNavigation)
+const navigation = computed(() => ['日常操作', '查看与研究', '规则与数据'].map(group => ({ group, items: allNavigation.filter(item => item.group === group) })))
 let removeMonitorAlertListener: (() => void) | undefined
 
 function replaceProfile(next: UserProfile) {
@@ -95,10 +95,13 @@ onBeforeUnmount(() => removeMonitorAlertListener?.())
       </header>
 
       <nav class="primary-nav" aria-label="主要功能">
-        <RouterLink v-for="item in navigation" :key="item.to" class="primary-nav__item" :to="item.to">
-          <span class="primary-nav__index" aria-hidden="true">{{ item.index }}</span>
-          <span>{{ item.label }}</span>
-        </RouterLink>
+        <section v-for="section in navigation" :key="section.group" class="nav-group" :aria-label="section.group">
+          <p>{{ section.group }}</p>
+          <RouterLink v-for="item in section.items" :key="item.to" class="primary-nav__item" :to="item.to">
+            <span class="primary-nav__index" aria-hidden="true">{{ item.index }}</span>
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </section>
       </nav>
 
       <footer class="sidebar__footer">

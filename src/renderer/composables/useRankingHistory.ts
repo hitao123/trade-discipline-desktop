@@ -36,7 +36,15 @@ export function useRankingHistory(options: { request?: Requester } = {}) {
     } finally { if (version === requestVersion) loading.value = false }
   }
   async function selectDate(date: string) { await load(kind.value, date) }
-  async function previous() { const index = currentDates.value.findIndex(item => item.tradeDate === currentDate.value); if (index >= 0 && index < currentDates.value.length - 1) await selectDate(currentDates.value[index + 1].tradeDate) }
-  async function next() { const index = currentDates.value.findIndex(item => item.tradeDate === currentDate.value); if (index > 0) await selectDate(currentDates.value[index - 1].tradeDate) }
+  async function previous() {
+    const index = currentDates.value.findIndex(item => item.tradeDate === currentDate.value)
+    const target = index >= 0 ? currentDates.value[index + 1] : undefined
+    if (target) await selectDate(target.tradeDate)
+  }
+  async function next() {
+    const index = currentDates.value.findIndex(item => item.tradeDate === currentDate.value)
+    const target = index > 0 ? currentDates.value[index - 1] : undefined
+    if (target) await selectDate(target.tradeDate)
+  }
   return { kind, comparison, currentDate, currentDates, loading, error, load, selectDate, previous, next }
 }

@@ -98,8 +98,8 @@ onBeforeUnmount(() => window.removeEventListener('paste', handlePaste))
     <div class="screenshot-import__copy">
       <p>LOCAL OCR</p>
       <div>
-        <h2 id="screenshot-import-title">用券商成交截图预填</h2>
-        <span>截图后直接按 ⌘V，或选择图片文件；只在本机识别，不上传。</span>
+        <h2 id="screenshot-import-title">截图预填</h2>
+        <span>⌘V 或选择图片；只在本机识别，不上传。仍请核对并确认所有字段。</span>
       </div>
     </div>
     <div class="screenshot-import__actions">

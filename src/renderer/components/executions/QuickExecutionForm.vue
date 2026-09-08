@@ -32,13 +32,17 @@ const form = reactive({
   brokerReference: '',
   exitCode: '',
   evidence: '',
+  emotionState: 'unfilled' as 'recorded' | 'unfilled' | 'unknown',
   fearScore: 0,
   greedScore: 0,
   revengeScore: 0,
+  planConfirmed: false,
+  timeConfirmed: false,
 })
 
 const selected = computed(() => props.instruments.find(item => item.id === form.instrumentId))
 const qualifiedPlans = computed(() => activeQualifiedPlans(props.plans))
+const matchingPlans = computed(() => qualifiedPlans.value.filter(plan => plan.draft.instrumentId === form.instrumentId))
 const localPriceMinor = computed(() => Math.round(Number(form.localPrice || 0) * 100))
 const localPriceTenThousandth = computed(() => Math.round(Number(form.localPrice || 0) * 10_000))
 const localAmountMinor = computed(() => Math.round(Number(form.localPrice || 0) * Number(form.quantity || 0) * 100))
@@ -87,11 +91,9 @@ function submit() {
     brokerReference: form.brokerReference || undefined,
     exitCode: form.exitCode || undefined,
     evidence: form.evidence || undefined,
-    emotion: {
-      fearScore: Number(form.fearScore),
-      greedScore: Number(form.greedScore),
-      revengeScore: Number(form.revengeScore),
-    },
+    emotion: form.emotionState === 'recorded'
+      ? { state: 'recorded', fearScore: Number(form.fearScore), greedScore: Number(form.greedScore), revengeScore: Number(form.revengeScore) }
+      : { state: form.emotionState, fearScore: 0, greedScore: 0, revengeScore: 0 },
   })
 }
 </script>
@@ -124,6 +126,24 @@ function submit() {
       </label>
     </div>
 
+    <div class="quick-grid quick-grid--confirm">
+      <label class="field">
+        <span>计划关联（请明确选择）</span>
+        <select v-model="form.planId" aria-label="计划关联（请明确选择）">
+          <option value="">无计划成交（如实保存并记入纪律记录）</option>
+          <option v-for="plan in matchingPlans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.draft.thesis || '已校验计划' }} · 有效至 {{ new Date(String(plan.draft.validUntil)).toLocaleDateString('zh-CN') }}</option>
+        </select>
+        <small v-if="!matchingPlans.length">该证券没有当前合格且未过期的计划；无计划成交仍可保存。</small>
+      </label>
+      <label class="field">
+        <span>实际成交日期与时间</span>
+        <input v-model="form.executedAt" aria-label="实际成交日期与时间" type="datetime-local" step="1" required />
+        <small>默认显示当前时间，仅为填写起点；历史成交请改为券商实际时间。</small>
+      </label>
+      <label class="fact-confirmation"><input v-model="form.planConfirmed" type="checkbox" required /><span>我已核对计划关联；未选即为真实无计划成交。</span></label>
+      <label class="fact-confirmation"><input v-model="form.timeConfirmed" type="checkbox" required /><span>我已核对成交日期与时间，不把历史成交记成今天。</span></label>
+    </div>
+
     <div class="amount-row">
       <div><span>本币成交额</span><strong>{{ localAmountLabel }}</strong></div>
       <label class="field settlement-field">
@@ -134,14 +154,17 @@ function submit() {
       </label>
     </div>
 
-    <p class="discipline-note">无计划也可以如实保存，系统会记入纪律记录。</p>
-
     <section class="emotion-panel" aria-labelledby="execution-emotion-title">
       <div>
         <strong id="execution-emotion-title">当时情绪</strong>
-        <span>只填下单那一刻的真实程度，0 表示没有，10 表示非常强。</span>
+        <span>请选择记录状态。明确 0 与未填写、记不清会被分别保存；不会用 0 代替空白。</span>
       </div>
-      <div class="emotion-grid">
+      <div class="emotion-state" role="radiogroup" aria-label="情绪记录状态">
+        <label><input v-model="form.emotionState" type="radio" value="unfilled" />未填写</label>
+        <label><input v-model="form.emotionState" type="radio" value="recorded" />如实评分</label>
+        <label><input v-model="form.emotionState" type="radio" value="unknown" />记不清</label>
+      </div>
+      <div v-if="form.emotionState === 'recorded'" class="emotion-grid">
         <label class="field"><span>恐惧 0–10</span><input v-model.number="form.fearScore" aria-label="恐惧 0–10" type="number" min="0" max="10" step="1" required /></label>
         <label class="field"><span>贪婪 0–10</span><input v-model.number="form.greedScore" aria-label="贪婪 0–10" type="number" min="0" max="10" step="1" required /></label>
         <label class="field"><span>回本/报复性冲动 0–10</span><input v-model.number="form.revengeScore" aria-label="回本/报复性冲动 0–10" type="number" min="0" max="10" step="1" required /></label>
@@ -149,10 +172,8 @@ function submit() {
     </section>
 
     <details class="optional-details">
-      <summary>稍后补充计划、时间和凭证</summary>
+      <summary>补充券商编号、卖出原因和凭证</summary>
       <div class="quick-grid optional-grid">
-        <label class="field"><span>对应计划（可不选）</span><select v-model="form.planId"><option value="">无计划成交</option><option v-for="plan in qualifiedPlans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.status }}</option></select></label>
-        <label class="field"><span>成交时间</span><input v-model="form.executedAt" type="datetime-local" step="1" /></label>
         <label class="field"><span>券商成交编号（可选）</span><input v-model="form.brokerReference" /></label>
         <label v-if="form.side === 'sell'" class="field"><span>卖出代码</span><select v-model="form.exitCode"><option value="">暂未补充</option><option value="T">T · 目标/估值退出</option><option value="B">B · 逻辑破坏</option><option value="R">R · 风险退出</option><option value="C">C · 组合约束</option></select></label>
         <label v-if="form.side === 'sell'" class="field field--wide"><span>卖出证据（可稍后在复盘补充）</span><textarea v-model="form.evidence" rows="2" /></label>
@@ -169,6 +190,8 @@ function submit() {
 .boundary-note strong { color: var(--ink); }
 .quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .quick-grid--primary { grid-template-columns: 1.35fr .8fr .65fr .8fr; }
+.quick-grid--confirm { grid-template-columns: 1fr 1fr; padding: 14px; border: 1px solid var(--line); background: var(--paper-deep); }
+.fact-confirmation { display: flex; align-items: start; gap: 8px; color: var(--ink); font-size: 12px; line-height: 1.5; }.fact-confirmation input { width: auto; margin-top: 2px; }
 .field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .field-heading small { flex: none; font-size: 10px; font-weight: 400; }
 .amount-row { display: grid; grid-template-columns: minmax(180px, .75fr) minmax(260px, 1.25fr); gap: 14px; align-items: stretch; }
@@ -181,11 +204,12 @@ function submit() {
 .emotion-panel > div:first-child { display: grid; gap: 3px; }
 .emotion-panel strong { font-size: 12px; }
 .emotion-panel span { color: var(--ink-muted); font-size: 11px; }
+.emotion-state { display: flex; flex-wrap: wrap; gap: 14px; }.emotion-state label { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; }.emotion-state input { width: auto; }
 .emotion-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .optional-details { padding: 12px 14px; border: 1px solid var(--line); color: var(--ink-muted); font-size: 12px; }
 .optional-details summary { cursor: pointer; font-weight: 650; }
 .optional-grid { margin-top: 14px; }
 .field--wide { grid-column: 1 / -1; }
 .quick-submit { min-height: 48px; font-size: 15px; }
-@media (max-width: 900px) { .quick-grid--primary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.amount-row { grid-template-columns: 1fr; }.emotion-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .quick-grid--primary, .quick-grid--confirm { grid-template-columns: repeat(2, minmax(0, 1fr)); }.amount-row { grid-template-columns: 1fr; }.emotion-grid { grid-template-columns: 1fr; } }
 </style>
