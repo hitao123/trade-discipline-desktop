@@ -27,6 +27,8 @@ type EastmoneyProvider struct {
 	Now                func() time.Time
 }
 
+func (*EastmoneyProvider) SupportsVerifiedCloseRanking() bool { return true }
+
 type flexibleFloat float64
 
 func (f *flexibleFloat) UnmarshalJSON(data []byte) error {

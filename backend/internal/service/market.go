@@ -73,16 +73,16 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 	}()
 	for _, kind := range []market.RankingKind{market.KindStock, market.KindETF} {
 		quotes, err := s.marketProvider.FetchRankings(ctx, kind)
-		quality := market.AssessCloseRanking(attemptedAt, kind, quotes)
-		if err != nil || quality.Quality != market.RankingQualityVerifiedClose {
+		quality := assessRankingProvider(s.marketProvider, attemptedAt, kind, quotes)
+		if err != nil || quality.Quality == market.RankingQualityIncomplete {
 			if s.rankingFallback == nil {
 				result.Errors[string(kind)] = "成交额榜单未通过收盘完整性校验，已保留本地缓存"
 				result.Health[string(kind)] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "PRIMARY_TEMPORARY_FAILURE"}
 				continue
 			}
 			quotes, err = s.rankingFallback.FetchRankings(ctx, kind)
-			quality = market.AssessCloseRanking(attemptedAt, kind, quotes)
-			if err != nil || quality.Quality != market.RankingQualityVerifiedClose {
+			quality = assessRankingProvider(s.rankingFallback, attemptedAt, kind, quotes)
+			if err != nil || quality.Quality == market.RankingQualityIncomplete {
 				result.Errors[string(kind)] = "主、备用成交额榜单均未通过收盘完整性校验，已保留本地缓存"
 				result.Health[string(kind)] = market.ComponentHealth{State: market.HealthUnavailable, Message: "暂不可用", DetailCode: "FALLBACK_FAILURE"}
 				continue
@@ -183,6 +183,14 @@ func (s *Service) RefreshMarket(ctx context.Context) (result MarketResult, retur
 		return result, fmt.Errorf("股票、ETF 和市场概览均无可用数据")
 	}
 	return result, nil
+}
+
+func assessRankingProvider(provider market.RankingProvider, at time.Time, kind market.RankingKind, quotes []market.Quote) market.RankingQualityInfo {
+	trusted, ok := provider.(market.VerifiedCloseRankingProvider)
+	if !ok || !trusted.SupportsVerifiedCloseRanking() {
+		return market.RankingQualityInfo{Quality: market.RankingQualityLegacyUnverified, Reason: "来源未声明完整榜单口径"}
+	}
+	return market.AssessCloseRanking(at, kind, quotes)
 }
 
 func validQuoteFallback(now time.Time, keys []market.InstrumentKey, quotes []market.Quote) bool {

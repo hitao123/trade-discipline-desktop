@@ -201,6 +201,7 @@ export interface RankingComparisonEntry {
   streakDays: number | null
   streakExact: boolean
   streakReason?: string
+	etfLabel: { trackingIndexId: string | null, trackingIndexName: string | null, assetCategory: string, sourceURL: string, verifiedAt: string } | null
 }
 export interface RankingComparison {
   snapshot: MarketSnapshot | null

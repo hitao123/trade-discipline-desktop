@@ -1,0 +1,6 @@
+[
+  {"market":"SH","code":"510300","trackingIndexId":"csi:000300","trackingIndexName":"沪深300指数","assetCategory":"股票","sourceURL":"https://www.htsc.com.cn/browser/view/gpqq_qqhy.jsp","verifiedAt":"2026-09-07"},
+  {"market":"SH","code":"510500","trackingIndexId":"csi:000905","trackingIndexName":"中证500指数","assetCategory":"股票","sourceURL":"https://www.nffund.com/main/files/2026/02/24/274020433840.pdf","verifiedAt":"2026-09-07"},
+  {"market":"SH","code":"588000","trackingIndexId":"sse:000688","trackingIndexName":"上证科创板50成份指数","assetCategory":"股票","sourceURL":"https://www.chinaamc.com.cn/fund/588000/index.shtml","verifiedAt":"2026-09-07"},
+  {"market":"SH","code":"518880","trackingIndexId":"sge:Au99.99","trackingIndexName":"上海黄金交易所 Au99.99","assetCategory":"商品","sourceURL":"https://huaan.com.cn/funds/518880/index.shtml","verifiedAt":"2026-09-07"}
+]

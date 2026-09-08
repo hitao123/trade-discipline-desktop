@@ -39,6 +39,15 @@ describe('SettingsView', () => {
     expect(screen.queryByText('腾讯顺序门槛（可选）')).toBeNull()
   })
 
+  it('keeps cash movement controls in the settings content column', async () => {
+    const { container } = render(SettingsView)
+    await screen.findByLabelText('资金变动金额（元）')
+
+    const contentColumn = container.querySelector('.cash-management')
+    expect(contentColumn).toContainElement(container.querySelector('.cash-form'))
+    expect(contentColumn).toContainElement(container.querySelector('.cash-history'))
+  })
+
   it('requires a reason before creating a new rule version', async () => {
     render(SettingsView)
     const submit = await screen.findByRole('button', { name: '创建规则新版本' })

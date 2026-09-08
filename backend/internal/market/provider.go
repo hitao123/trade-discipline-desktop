@@ -27,6 +27,12 @@ type RankingProvider interface {
 	FetchRankings(ctx context.Context, kind RankingKind) ([]Quote, error)
 }
 
+// VerifiedCloseRankingProvider declares that it fetches a full amount-sorted
+// candidate universe before applying the documented filter and Top-20 limit.
+// Providers without this proof may still be stored for review, but are never
+// promoted to comparable close history.
+type VerifiedCloseRankingProvider interface{ SupportsVerifiedCloseRanking() bool }
+
 type QuoteProvider interface {
 	FetchQuotes(ctx context.Context, keys []InstrumentKey) ([]Quote, error)
 }

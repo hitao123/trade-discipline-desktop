@@ -27,6 +27,8 @@ type SinaProvider struct {
 	Client          *http.Client
 }
 
+func (SinaProvider) SupportsVerifiedCloseRanking() bool { return true }
+
 type sinaWireRow struct {
 	Symbol        string        `json:"symbol"`
 	Code          string        `json:"code"`
@@ -38,7 +40,7 @@ type sinaWireRow struct {
 }
 
 func (p SinaProvider) FetchRankings(ctx context.Context, kind RankingKind) ([]Quote, error) {
-	tradeDate, marketStamp, err := p.fetchMarketTimestamp(ctx)
+	tradeDate, _, err := p.fetchMarketTimestamp(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +108,12 @@ func (p SinaProvider) FetchRankings(ctx context.Context, kind RankingKind) ([]Qu
 		if kind == KindETF && !visibleETF(code, name) {
 			continue
 		}
-		sourceTime := marketStamp
-		if row.TickTime != "" {
-			if parsedTime, parseErr := time.ParseInLocation("2006-01-02 15:04:05", tradeDate+" "+row.TickTime, location); parseErr == nil {
-				sourceTime = parsedTime
-			}
+		// The index timestamp establishes the ranking date, not when an individual
+		// security's turnover was observed. A missing or malformed ticktime must
+		// therefore remain unverifiable instead of inheriting the index time.
+		sourceTime, parseErr := time.ParseInLocation("2006-01-02 15:04:05", tradeDate+" "+strings.TrimSpace(row.TickTime), location)
+		if parseErr != nil {
+			sourceTime = time.Time{}
 		}
 		quotes = append(quotes, Quote{
 			TradeDate: tradeDate, Market: market, Code: code, Name: name, AssetType: kind,

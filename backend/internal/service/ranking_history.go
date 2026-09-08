@@ -10,14 +10,15 @@ import (
 )
 
 type RankingComparisonEntry struct {
-	Quote        market.Quote `json:"quote"`
-	Rank         int          `json:"rank"`
-	PreviousRank *int         `json:"previousRank"`
-	RankDelta    *int         `json:"rankDelta"`
-	ChangeState  string       `json:"changeState"`
-	StreakDays   *int         `json:"streakDays"`
-	StreakExact  bool         `json:"streakExact"`
-	StreakReason string       `json:"streakReason,omitempty"`
+	Quote        market.Quote     `json:"quote"`
+	Rank         int              `json:"rank"`
+	PreviousRank *int             `json:"previousRank"`
+	RankDelta    *int             `json:"rankDelta"`
+	ChangeState  string           `json:"changeState"`
+	StreakDays   *int             `json:"streakDays"`
+	StreakExact  bool             `json:"streakExact"`
+	StreakReason string           `json:"streakReason,omitempty"`
+	ETFLabel     *market.ETFLabel `json:"etfLabel"`
 }
 type RankingComparison struct {
 	Snapshot           *store.MarketSnapshotRow `json:"snapshot"`
@@ -87,26 +88,26 @@ func (s *Service) RankingComparison(ctx context.Context, kind market.RankingKind
 	baseline, err := s.store.RankingSnapshotAt(ctx, kind, previousDate)
 	if err == sql.ErrNoRows {
 		result.Reason = "missing_baseline"
-		return s.withStreaks(ctx, result, calendar), nil
+		return s.withStreaks(ctx, s.unknownRankingEntries(result), calendar), nil
 	}
 	if err != nil {
 		return RankingComparison{}, err
 	}
 	if baseline.Quality != market.RankingQualityVerifiedClose {
 		result.Reason = "missing_baseline"
-		return s.withStreaks(ctx, result, calendar), nil
+		return s.withStreaks(ctx, s.unknownRankingEntries(result), calendar), nil
 	}
 	result.BaselineSnapshotID = &baseline.ID
 	if baseline.UniverseVersion != snapshot.UniverseVersion {
 		result.Reason = "universe_changed"
-		return s.unknownRankingEntries(result), nil
+		return s.withStreaks(ctx, s.unknownRankingEntries(result), calendar), nil
 	}
 	prior := map[string]int{}
 	for i, q := range baseline.Entries {
 		prior[q.Market+":"+q.Code] = i + 1
 	}
 	for i, q := range snapshot.Entries {
-		entry := RankingComparisonEntry{Quote: q, Rank: i + 1, ChangeState: "new"}
+		entry := RankingComparisonEntry{Quote: q, Rank: i + 1, ChangeState: "new", ETFLabel: etfLabel(kind, q)}
 		if rank, ok := prior[q.Market+":"+q.Code]; ok {
 			entry.PreviousRank = &rank
 			delta := rank - (i + 1)
@@ -125,9 +126,15 @@ func (s *Service) RankingComparison(ctx context.Context, kind market.RankingKind
 }
 func (s *Service) unknownRankingEntries(result RankingComparison) RankingComparison {
 	for i, q := range result.Snapshot.Entries {
-		result.Entries = append(result.Entries, RankingComparisonEntry{Quote: q, Rank: i + 1, ChangeState: "unknown"})
+		result.Entries = append(result.Entries, RankingComparisonEntry{Quote: q, Rank: i + 1, ChangeState: "unknown", ETFLabel: etfLabel(result.Snapshot.Kind, q)})
 	}
 	return result
+}
+func etfLabel(kind market.RankingKind, quote market.Quote) *market.ETFLabel {
+	if kind != market.KindETF {
+		return nil
+	}
+	return market.ETFLabelFor(quote.Market, quote.Code)
 }
 func (s *Service) withStreaks(ctx context.Context, result RankingComparison, calendar market.AShareCalendar) RankingComparison {
 	if result.Snapshot == nil || result.Snapshot.Quality != market.RankingQualityVerifiedClose {

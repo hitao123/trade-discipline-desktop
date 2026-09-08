@@ -2,8 +2,10 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -71,6 +73,44 @@ func TestSinaProviderAcceptsIndexPayloadWithTrailingComma(t *testing.T) {
 	quotes, err := (SinaProvider{RankingURL: server.URL + "/ranking", IndexURL: server.URL + "/index", Client: server.Client()}).FetchRankings(context.Background(), KindStock)
 	if err != nil || len(quotes) != 1 || quotes[0].TradeDate != "2026-08-21" || quotes[0].SourceTime.Format(time.RFC3339) != "2026-08-21T07:00:00Z" {
 		t.Fatalf("quotes=%#v err=%v", quotes, err)
+	}
+}
+
+func TestSinaProviderDoesNotSubstituteIndexTimeForMissingOrInvalidTicktime(t *testing.T) {
+	for _, ticktime := range []string{"", "not-a-time"} {
+		t.Run(fmt.Sprintf("ticktime=%q", ticktime), func(t *testing.T) {
+			rows := make([]string, 0, StockRankingLimit)
+			for index := 0; index < StockRankingLimit; index++ {
+				rowTicktime := "15:20:00"
+				if index == 10 {
+					rowTicktime = ticktime
+				}
+				rows = append(rows, fmt.Sprintf(`{"symbol":"sh%06d","code":"%06d","name":"样本%d","trade":"10.00","changepercent":1.0,"amount":%d,"ticktime":"%s"}`, 600000+index, 600000+index, index, 20-index, rowTicktime))
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/index":
+					_, _ = w.Write([]byte(`var hq_str_sh000001="上证指数,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-08-21,15:43:32,00";`))
+				case "/ranking":
+					_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+				}
+			}))
+			defer server.Close()
+
+			quotes, err := (SinaProvider{RankingURL: server.URL + "/ranking", IndexURL: server.URL + "/index", Client: server.Client()}).FetchRankings(context.Background(), KindStock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, quote := range quotes {
+				if quote.Code == "600010" && !quote.SourceTime.IsZero() {
+					t.Fatalf("missing ticktime inherited source time %s", quote.SourceTime)
+				}
+			}
+			quality := AssessCloseRanking(time.Date(2026, 8, 21, 15, 30, 0, 0, time.FixedZone("CST", 8*3600)), KindStock, quotes)
+			if quality.Quality != RankingQualityIncomplete || quality.Reason != "来源时间不能证明收盘" {
+				t.Fatalf("quality=%#v", quality)
+			}
+		})
 	}
 }
 

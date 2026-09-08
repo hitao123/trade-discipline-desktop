@@ -29,11 +29,11 @@ func (c AShareCalendar) IsTradingDay(date string) (bool, bool) {
 	return true, true
 }
 func (c AShareCalendar) PrevTradingDay(date string) (string, bool) {
-	t, err := time.Parse("2006-01-02", date)
-	if err != nil {
+	if _, known := c.IsTradingDay(date); !known {
 		return "", false
 	}
-	for i := 0; i < 10; i++ {
+	t, _ := time.Parse("2006-01-02", date)
+	for {
 		t = t.AddDate(0, 0, -1)
 		day := t.Format("2006-01-02")
 		if ok, known := c.IsTradingDay(day); !known {
@@ -42,5 +42,4 @@ func (c AShareCalendar) PrevTradingDay(date string) (string, bool) {
 			return day, true
 		}
 	}
-	return "", false
 }

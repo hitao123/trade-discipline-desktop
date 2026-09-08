@@ -41,11 +41,22 @@ describe('MarketView', () => {
       isLive: false,
       state: 'market_closed',
     }
+    const comparison = {
+      snapshot: market.stock,
+      baselineDate: '2026-08-10',
+      baselineSnapshotId: 'stock-0',
+      quality: 'verified_close',
+      entries: [{ quote: market.stock.entries[0], rank: 9, previousRank: null, rankDelta: null, changeState: 'new', streakDays: 3, streakExact: true, etfLabel: null }],
+    }
     request.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === '/api/market/snapshots/latest') return market
       if (path === '/api/market/live/latest') return liveMarket
       if (path === '/api/market/live/refresh' && init?.method === 'POST') return liveMarket
       if (path.startsWith('/api/market/overview')) return overview
+      if (path.startsWith('/api/market/rankings/dates?kind=stock')) return { kind: 'stock', latestDate: '2026-08-11', dates: [{ tradeDate: '2026-08-11', quality: 'verified_close' }] }
+      if (path.startsWith('/api/market/rankings/dates?kind=etf')) return { kind: 'etf', latestDate: '2026-08-11', dates: [{ tradeDate: '2026-08-11', quality: 'verified_close' }] }
+      if (path.startsWith('/api/market/rankings/compare?kind=stock')) return comparison
+      if (path.startsWith('/api/market/rankings/compare?kind=etf')) return { ...comparison, snapshot: market.etf, entries: [{ ...comparison.entries[0], quote: market.etf.entries[0], etfLabel: { trackingIndexId: 'csi:000300', trackingIndexName: '沪深300指数', assetCategory: '股票', sourceURL: 'fixture', verifiedAt: '2026-09-07' } }] }
       if (path.startsWith('/api/market/history?')) return { market: 'SH', code: '600001', range: '3m', points: [], cached: false }
       if (path === '/api/market/history/refresh') return {
         market: 'SH', code: '600001', range: '3m', cached: false, lastSuccessfulAt: '2026-08-12T08:00:00Z',
@@ -89,4 +100,22 @@ describe('MarketView', () => {
 	  expect(screen.getByText('南向资金')).toBeTruthy()
 	  expect(screen.queryByText(/push2\.eastmoney\.com|EOF/)).toBeNull()
 	})
+
+  it('shows verified ranking summaries and preserves an explicit historical choice after refresh', async () => {
+    render(MarketView)
+    expect(await screen.findByText('新进榜 1 只 · 连续在榜≥3日 1 只')).toBeTruthy()
+    expect(screen.getByText('与 2026-08-10 收盘比较')).toBeTruthy()
+    expect(screen.getByText('交易日 2026-08-11')).toBeTruthy()
+  })
+
+  it('uses the live snapshot rank when adding a live instrument to the watchlist', async () => {
+    render(MarketView)
+    await screen.findByText('示例股票')
+    await fireEvent.click(screen.getByRole('button', { name: '实时成交' }))
+    await fireEvent.click(screen.getByRole('button', { name: '加入观察' }))
+    expect(request).toHaveBeenCalledWith('/api/watchlist', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('实时成交榜单（2026-08-11，第 1 名）'),
+    }))
+  })
 })
