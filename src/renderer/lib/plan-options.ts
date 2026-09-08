@@ -1,13 +1,18 @@
 import type { PlanRecord } from '@/renderer/types'
 
 export function activeQualifiedPlans(plans: PlanRecord[], now = Date.now()) {
+  return qualifiedPlansAt(plans, now)
+}
+
+export function qualifiedPlansAt(plans: PlanRecord[], at: number | Date) {
+  const timestamp = at instanceof Date ? at.getTime() : at
   return plans.filter((plan) => {
     if (plan.status !== 'qualified')
       return false
     const until = plan.draft.validUntil
     if (!until)
       return true
-    return new Date(String(until)).getTime() > now
+    return new Date(String(until)).getTime() > timestamp
   })
 }
 

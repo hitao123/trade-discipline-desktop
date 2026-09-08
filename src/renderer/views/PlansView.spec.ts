@@ -90,6 +90,23 @@ describe('PlansView', () => {
     expect(screen.getByText('已准备去券商执行；开仓前确认已写入本地记录。')).toBeTruthy()
   })
 
+  it('does not allow a qualified plan to enter pre-trade confirmation during an active cooldown', async () => {
+    const plan = {
+      id: 'plan-1', status: 'qualified', ruleVersionId: 'rule-1',
+      draft: { instrumentId: 'hk-9988', code: '9988.HK', quantity: 100, thesis: '云业务利润率改善', validUntil: '2026-12-31T00:00:00.000Z' },
+      validation: { qualified: true, savable: true, findings: [], metrics: {} },
+    }
+    request.mockImplementation((path: string) => {
+      if (path === '/api/instruments') return Promise.resolve([{ id: 'hk-9988', code: '9988.HK', name: '阿里巴巴-W', lotSize: 100, currency: 'HKD' }])
+      if (path === '/api/plans') return Promise.resolve([plan])
+      if (path === '/api/dashboard') return Promise.resolve({ cooldown: { reason: '无计划成交', expectedEndsAt: '2026-12-31T00:00:00.000Z' } })
+      throw new Error(`unexpected ${path}`)
+    })
+    render(PlansView)
+    expect(await screen.findByRole('button', { name: '冷静期内不可确认' })).toBeDisabled()
+    expect(screen.getByText('当前受冷静期限制：无计划成交')).toBeTruthy()
+  })
+
   it('revises a plan with a reason instead of replacing history silently', async () => {
     const plan = {
       id: 'plan-1', status: 'qualified', ruleVersionId: 'rule-1',

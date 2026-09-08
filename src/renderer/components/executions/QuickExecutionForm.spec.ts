@@ -18,7 +18,7 @@ describe('QuickExecutionForm', () => {
     expect(screen.getByText('成交均价').closest('.field-heading')).toHaveTextContent('成交均价HKD')
     await fireEvent.update(screen.getByLabelText('成交均价'), '480')
 	  expect(screen.getByText('HK$48,000.00')).toBeTruthy()
-    expect(screen.getByText('该证券没有当前合格且未过期的计划；无计划成交仍可保存。')).toBeTruthy()
+    expect(screen.getByText('该证券没有在实际成交时间有效的合格计划；无计划成交仍可保存。')).toBeTruthy()
     await fireEvent.update(screen.getByLabelText('券商实际人民币扣款/到账（元）'), '44160')
     await confirmFacts()
     await fireEvent.click(screen.getByRole('button', { name: '立即如实入账' }))
@@ -79,5 +79,26 @@ describe('QuickExecutionForm', () => {
     expect(submissions[0]?.[0]).toEqual(expect.objectContaining({
       emotion: { state: 'unknown', fearScore: 0, greedScore: 0, revengeScore: 0 },
     }))
+  })
+
+  it('offers a plan that was effective at the recorded historical execution time', async () => {
+    const rendered = render(QuickExecutionForm, {
+      props: {
+        instruments: [hkInstrument], busy: false,
+        plans: [{
+          id: 'expired-now', status: 'qualified', ruleVersionId: 'rule-1',
+          draft: { instrumentId: 'hk-0700', code: '0700.HK', thesis: '历史有效计划', validUntil: '2026-08-15T08:00:00.000Z' },
+          validation: { qualified: true, savable: true, findings: [], metrics: {} },
+        }],
+      },
+    })
+    await fireEvent.update(screen.getByLabelText('实际成交日期与时间'), '2026-08-14T10:00:00')
+    await fireEvent.update(screen.getByLabelText('计划关联（请明确选择）'), 'expired-now')
+    await fireEvent.update(screen.getByLabelText('成交均价'), '480')
+    await fireEvent.update(screen.getByLabelText('券商实际人民币扣款/到账（元）'), '44160')
+    await confirmFacts()
+    await fireEvent.click(screen.getByRole('button', { name: '立即如实入账' }))
+    const submissions = rendered.emitted('submit') as unknown as Array<[Record<string, unknown>]>
+    expect(submissions[0]?.[0]).toEqual(expect.objectContaining({ planId: 'expired-now' }))
   })
 })

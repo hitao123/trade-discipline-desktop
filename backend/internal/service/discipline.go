@@ -28,6 +28,11 @@ func (s *Service) ConfirmPreTrade(ctx context.Context, planID string, input PreT
 	if !plan.Draft.ValidUntil.After(now) {
 		return domain.PreTradeConfirmation{}, fmt.Errorf("计划已过期，不能开仓前确认")
 	}
+	if cooldown, err := s.store.LatestCooldown(ctx); err != nil {
+		return domain.PreTradeConfirmation{}, err
+	} else if cooldown != nil && now.Before(cooldown.ExpectedEndsAt) {
+		return domain.PreTradeConfirmation{}, fmt.Errorf("当前处于冷静期（%s），不能开仓前确认", cooldown.Reason)
+	}
 	if input.StartedAt.IsZero() || now.Sub(input.StartedAt) < 30*time.Second {
 		return domain.PreTradeConfirmation{}, fmt.Errorf("请完成 30 秒冷静确认")
 	}

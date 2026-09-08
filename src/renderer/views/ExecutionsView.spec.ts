@@ -44,7 +44,7 @@ describe('ExecutionsView', () => {
 
   it('allows honest recording after a serious violation warning', async () => {
     render(ExecutionsView)
-	  expect(await screen.findByText('该证券没有当前合格且未过期的计划；无计划成交仍可保存。')).toBeTruthy()
+	  expect(await screen.findByText('该证券没有在实际成交时间有效的合格计划；无计划成交仍可保存。')).toBeTruthy()
 	  expect(screen.getByLabelText('我已核对计划关联；未选即为真实无计划成交。')).toBeTruthy()
 	  expect(screen.getByLabelText('我已核对成交日期与时间，不把历史成交记成今天。')).toBeTruthy()
 	  expect(screen.getByRole('button', { name: '立即如实入账' })).toBeEnabled()

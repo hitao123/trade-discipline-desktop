@@ -29,6 +29,24 @@ func TestConfirmPreTradeRequiresThirtySecondsAndAllAttestations(t *testing.T) {
 	}
 }
 
+func TestConfirmPreTradeRejectsActiveCooldown(t *testing.T) {
+	svc := openExecutionService(t)
+	plan, err := svc.CreatePlan(context.Background(), validPlanDraft())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := svc.now()
+	_, err = svc.store.DB().ExecContext(context.Background(), `INSERT INTO cooldown_periods(id, reason, severity, starts_at, expected_ends_at, allowed_actions_json) VALUES(?,?,?,?,?,?)`,
+		"cooldown-test", "无计划成交", "serious", now.Add(-time.Hour).Format(time.RFC3339Nano), now.Add(time.Hour).Format(time.RFC3339Nano), `[]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := PreTradeConfirmationInput{StartedAt: now.Add(-30 * time.Second), NoFOMO: true, NoLossRecovery: true, NoAveragingDown: true}
+	if _, err := svc.ConfirmPreTrade(context.Background(), plan.ID, input); err == nil {
+		t.Fatal("active cooldown should prevent pre-trade confirmation")
+	}
+}
+
 func TestConfirmPreTradeRejectsRejectedAndExpiredPlans(t *testing.T) {
 	svc := openExecutionService(t)
 	rejectedDraft := validPlanDraft()

@@ -8,6 +8,7 @@ import type { Instrument } from '@/renderer/types'
 const props = defineProps<{ instruments: Instrument[]; busy: boolean; submitDisabled?: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string; preferredInstrumentId?: string; draftStorageKey?: string | undefined }>()
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; change: [payload: Record<string, unknown>] }>()
 const currentStep = shallowRef(1)
+const restoringDraft = shallowRef(false)
 
 const now = new Date()
 const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
@@ -34,6 +35,7 @@ watch(() => props.instruments, (instruments) => {
 }, { immediate: true })
 
 watch(() => form.instrumentId, (id, previous) => {
+  if (restoringDraft.value) return
   const instrument = props.instruments.find(item => item.id === id)
   if (instrument)
     form.quantity = instrument.lotSize
@@ -46,10 +48,11 @@ watch(() => form.instrumentId, (id, previous) => {
     form.estimatedCost = 0
     form.maxPlanLoss = 0
   }
-})
+}, { flush: 'sync' })
 
 function applyDraft(draft: Record<string, unknown>) {
   if (!draft) return
+  restoringDraft.value = true
   form.instrumentId = String(draft.instrumentId ?? '')
   form.thesis = String(draft.thesis ?? '')
   form.falsification = String(draft.falsification ?? '')
@@ -73,17 +76,21 @@ function applyDraft(draft: Record<string, unknown>) {
   form.revengeScore = Number(draft.revengeScore ?? 0)
   if (draft.referencePriceAt) form.referencePriceAt = dateTimeLocal(new Date(String(draft.referencePriceAt)))
   if (draft.validUntil) form.validUntil = dateTimeLocal(new Date(String(draft.validUntil)))
+  restoringDraft.value = false
 }
 
 watch(() => props.initialDraft, (draft) => {
-  if (draft) applyDraft(draft)
-  else if (props.draftStorageKey) {
+  if (props.draftStorageKey) {
     try {
       const saved = window.localStorage.getItem(props.draftStorageKey)
-      if (saved) applyDraft(JSON.parse(saved) as Record<string, unknown>)
+      if (saved) {
+        applyDraft(JSON.parse(saved) as Record<string, unknown>)
+        return
+      }
     }
     catch { /* A blocked or malformed local draft must not prevent plan creation. */ }
   }
+  if (draft) applyDraft(draft)
 }, { immediate: true })
 
 watch(form, () => {
@@ -116,9 +123,14 @@ function payload() {
     fearScore: Number(form.fearScore),
     greedScore: Number(form.greedScore),
     revengeScore: Number(form.revengeScore),
-    referencePriceAt: new Date(form.referencePriceAt).toISOString(),
-    validUntil: new Date(form.validUntil).toISOString(),
+    referencePriceAt: serializeDate(form.referencePriceAt),
+    validUntil: serializeDate(form.validUntil),
   }
+}
+
+function serializeDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toISOString()
 }
 
 function submit() {

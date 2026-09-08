@@ -32,8 +32,10 @@ const busyExecutionId = shallowRef('')
 const allPendingReviews = shallowRef<PostTradeReview[]>([])
 const executions = shallowRef<ExecutionRecord[]>([])
 const showAllPending = shallowRef(false)
+const draftPeriod = shallowRef({ periodStart: form.periodStart, periodEnd: form.periodEnd })
+const switchingPeriod = shallowRef(false)
 const instrumentNames = computed(() => Object.fromEntries(instruments.value.map(instrument => [instrument.id, `${instrument.code} · ${instrument.name}`])))
-const reviewDraftKey = computed(() => `plain-rule:weekly-review-draft:${form.periodStart}:${form.periodEnd}`)
+const reviewDraftKey = computed(() => draftKey(draftPeriod.value))
 const periodExecutions = computed(() => executions.value.filter((execution) => {
   const day = execution.executedAt.slice(0, 10)
   return day >= form.periodStart && day <= form.periodEnd
@@ -41,10 +43,20 @@ const periodExecutions = computed(() => executions.value.filter((execution) => {
 const periodViolations = computed(() => pendingReviews.value.length)
 const displayedPendingReviews = computed(() => showAllPending.value ? allPendingReviews.value : pendingReviews.value)
 
-function restoreDraft() {
+function draftKey(period: { periodStart: string; periodEnd: string }) {
+  return `plain-rule:weekly-review-draft:${period.periodStart}:${period.periodEnd}`
+}
+
+function persistDraft() {
+  if (review.value) return
+  try { window.localStorage.setItem(reviewDraftKey.value, JSON.stringify({ impulseNotes: form.impulseNotes, nextAllowedAction: form.nextAllowedAction })) }
+  catch { /* Draft persistence is local convenience only. */ }
+}
+
+function restoreDraft(period: { periodStart: string; periodEnd: string }) {
   if (review.value) return
   try {
-    const raw = window.localStorage.getItem(reviewDraftKey.value)
+    const raw = window.localStorage.getItem(draftKey(period))
     if (!raw) return
     const saved = JSON.parse(raw) as { impulseNotes?: string; nextAllowedAction?: string }
     form.impulseNotes = saved.impulseNotes ?? ''
@@ -53,9 +65,10 @@ function restoreDraft() {
   catch { /* A damaged local draft should not hide real review facts. */ }
 }
 
-async function loadPeriod() {
+async function loadPeriod(period: { periodStart: string; periodEnd: string }) {
   try {
-    const loaded = await api.request<Review | null>(`/api/reviews?periodStart=${encodeURIComponent(form.periodStart)}&periodEnd=${encodeURIComponent(form.periodEnd)}`)
+    const loaded = await api.request<Review | null>(`/api/reviews?periodStart=${encodeURIComponent(period.periodStart)}&periodEnd=${encodeURIComponent(period.periodEnd)}`)
+    if (form.periodStart !== period.periodStart || form.periodEnd !== period.periodEnd) return
     review.value = loaded ?? undefined
     if (loaded) {
       form.impulseNotes = loaded.userContent.impulseNotes
@@ -64,17 +77,20 @@ async function loadPeriod() {
     else {
       form.impulseNotes = ''
       form.nextAllowedAction = ''
-      restoreDraft()
+      restoreDraft(period)
     }
+    return true
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '复盘加载失败'
+    return false
   }
 }
 
-async function loadPending() {
+async function loadPending(period = { periodStart: form.periodStart, periodEnd: form.periodEnd }) {
   try {
-    const loaded = await api.request<PostTradeReview[]>(`/api/post-trade-reviews?periodStart=${encodeURIComponent(form.periodStart)}&periodEnd=${encodeURIComponent(form.periodEnd)}`)
+    const loaded = await api.request<PostTradeReview[]>(`/api/post-trade-reviews?periodStart=${encodeURIComponent(period.periodStart)}&periodEnd=${encodeURIComponent(period.periodEnd)}`)
+    if (form.periodStart !== period.periodStart || form.periodEnd !== period.periodEnd) return
     pendingReviews.value = Array.isArray(loaded) ? loaded : []
   }
   catch (cause) {
@@ -109,12 +125,25 @@ async function loadInstruments() {
 
 async function onPeriodChange() {
   error.value = ''
-  await Promise.all([loadPeriod(), loadPending()])
+  persistDraft()
+  const period = { periodStart: form.periodStart, periodEnd: form.periodEnd }
+  switchingPeriod.value = true
+  try {
+    const [periodLoaded] = await Promise.all([loadPeriod(period), loadPending(period)])
+    if (periodLoaded && form.periodStart === period.periodStart && form.periodEnd === period.periodEnd)
+      draftPeriod.value = period
+  }
+  finally {
+    if (form.periodStart === period.periodStart && form.periodEnd === period.periodEnd)
+      switchingPeriod.value = false
+  }
 }
 
 function chooseWeek(offset: number) {
-  const start = new Date(`${form.periodStart}T12:00:00`)
-  start.setDate(start.getDate() + offset * 7)
+  const start = offset === 0
+    ? new Date(`${dateLocal(monday)}T12:00:00`)
+    : new Date(`${form.periodStart}T12:00:00`)
+  if (offset !== 0) start.setDate(start.getDate() + offset * 7)
   const end = new Date(start)
   end.setDate(end.getDate() + 6)
   form.periodStart = dateLocal(start)
@@ -141,7 +170,7 @@ async function submit() {
   busy.value = true
   try {
     review.value = await api.request<Review>('/api/reviews', { method: 'POST', body: JSON.stringify(form) })
-    window.localStorage.removeItem(reviewDraftKey.value)
+    window.localStorage.removeItem(draftKey({ periodStart: form.periodStart, periodEnd: form.periodEnd }))
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '复盘保存失败'
@@ -151,13 +180,11 @@ async function submit() {
   }
 }
 
-watch(form, () => {
-  if (review.value) return
-  try { window.localStorage.setItem(reviewDraftKey.value, JSON.stringify({ impulseNotes: form.impulseNotes, nextAllowedAction: form.nextAllowedAction })) }
-  catch { /* Draft persistence is local convenience only. */ }
-}, { deep: true })
+watch(() => [form.impulseNotes, form.nextAllowedAction], () => {
+  if (!switchingPeriod.value) persistDraft()
+})
 
-onMounted(() => Promise.all([loadPeriod(), loadPending(), loadAllPending(), loadInstruments(), loadExecutions()]))
+onMounted(() => Promise.all([loadPeriod(draftPeriod.value), loadPending(draftPeriod.value), loadAllPending(), loadInstruments(), loadExecutions()]))
 </script>
 
 <template>

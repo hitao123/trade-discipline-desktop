@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 
-import { activeQualifiedPlans, preferredInstrumentId } from '@/renderer/lib/plan-options'
+import { preferredInstrumentId, qualifiedPlansAt } from '@/renderer/lib/plan-options'
 import { dateTimeLocal, formatPrice } from '@/renderer/lib/format'
 import type { ExecutionScreenshotPrefill } from '@/renderer/lib/execution-screenshot'
 import type { Instrument, PlanRecord } from '@/renderer/types'
@@ -41,7 +41,7 @@ const form = reactive({
 })
 
 const selected = computed(() => props.instruments.find(item => item.id === form.instrumentId))
-const qualifiedPlans = computed(() => activeQualifiedPlans(props.plans))
+const qualifiedPlans = computed(() => qualifiedPlansAt(props.plans, new Date(form.executedAt)))
 const matchingPlans = computed(() => qualifiedPlans.value.filter(plan => plan.draft.instrumentId === form.instrumentId))
 const localPriceMinor = computed(() => Math.round(Number(form.localPrice || 0) * 100))
 const localPriceTenThousandth = computed(() => Math.round(Number(form.localPrice || 0) * 10_000))
@@ -133,7 +133,7 @@ function submit() {
           <option value="">无计划成交（如实保存并记入纪律记录）</option>
           <option v-for="plan in matchingPlans" :key="plan.id" :value="plan.id">{{ plan.draft.code }} · {{ plan.draft.thesis || '已校验计划' }} · 有效至 {{ new Date(String(plan.draft.validUntil)).toLocaleDateString('zh-CN') }}</option>
         </select>
-        <small v-if="!matchingPlans.length">该证券没有当前合格且未过期的计划；无计划成交仍可保存。</small>
+        <small v-if="!matchingPlans.length">该证券没有在实际成交时间有效的合格计划；无计划成交仍可保存。</small>
       </label>
       <label class="field">
         <span>实际成交日期与时间</span>

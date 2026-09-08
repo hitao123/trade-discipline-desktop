@@ -26,6 +26,7 @@ const draftPreview = shallowRef<Record<string, unknown>>()
 const dashboard = shallowRef<{ cooldown?: { reason: string; expectedEndsAt: string } }>()
 const planDraftKey = 'plain-rule:plan-draft:v1'
 const editorVisible = computed(() => editorMode.value !== 'list')
+const activeCooldown = computed(() => dashboard.value?.cooldown && new Date(dashboard.value.cooldown.expectedEndsAt).getTime() > Date.now() ? dashboard.value.cooldown : undefined)
 
 async function load() {
   try {
@@ -46,18 +47,18 @@ async function savePlan(payload: Record<string, unknown>) {
   error.value = ''
   fieldErrors.value = {}
   try {
-    const plan = editingPlan.value
-      ? await api.request<PlanRecord>(`/api/plans/${editingPlan.value.id}`, { method: 'PUT', body: JSON.stringify({ reason: revisionReason.value, draft: payload }) })
+    const revisedPlanID = editingPlan.value?.id
+    const plan = revisedPlanID
+      ? await api.request<PlanRecord>(`/api/plans/${revisedPlanID}`, { method: 'PUT', body: JSON.stringify({ reason: revisionReason.value, draft: payload }) })
       : await api.request<PlanRecord>('/api/plans', { method: 'POST', body: JSON.stringify(payload) })
     selectedPlan.value = plan
-    plans.value = editingPlan.value ? plans.value.map(item => item.id === plan.id ? plan : item) : [plan, ...plans.value]
-    const wasNewPlan = !editingPlan.value
+    plans.value = revisedPlanID ? plans.value.map(item => item.id === plan.id ? plan : item) : [plan, ...plans.value]
     editingPlan.value = undefined
     editorMode.value = 'list'
-    if (wasNewPlan) {
-      try { window.localStorage.removeItem(planDraftKey) }
-      catch { /* Draft cleanup must not turn a saved, audited plan into an error. */ }
+    try {
+      window.localStorage.removeItem(revisedPlanID ? `plain-rule:plan-revision-draft:v1:${revisedPlanID}` : planDraftKey)
     }
+    catch { /* Draft cleanup must not turn a saved, audited plan into an error. */ }
     revisionReason.value = ''
     confirmationPlan.value = undefined
   }
@@ -71,6 +72,7 @@ async function savePlan(payload: Record<string, unknown>) {
 }
 
 function startPreTradeConfirmation(plan: PlanRecord) {
+  if (activeCooldown.value) return
   confirmationPlan.value = plan
   confirmationStartedAt.value = new Date().toISOString()
   confirmationError.value = ''
@@ -117,7 +119,7 @@ function closeEditor() {
 
 function executionState(plan: PlanRecord) {
   if (plan.status !== 'qualified') return '创建时未通过校验'
-  if (dashboard.value?.cooldown && new Date(dashboard.value.cooldown.expectedEndsAt).getTime() > Date.now()) return `当前受冷静期限制：${dashboard.value.cooldown.reason}`
+  if (activeCooldown.value) return `当前受冷静期限制：${activeCooldown.value.reason}`
   if (plan.draft.validUntil && new Date(String(plan.draft.validUntil)).getTime() <= Date.now()) return '当前已过有效期'
   return '当前可进入开仓前确认'
 }
@@ -138,7 +140,7 @@ onMounted(load)
           <button class="button" type="button" @click="closeEditor">返回计划列表</button>
         </div>
         <div v-else class="editor-heading"><div><p class="kicker">NEW PLAN</p><h2>按步骤填写计划</h2><span>输入会保存为本地草稿；只有最后保存并校验才会创建正式记录。</span></div><button class="button" type="button" @click="closeEditor">返回计划列表</button></div>
-        <PlanForm :key="editingPlan?.id ?? 'new'" :instruments="instruments" :busy="busy" :submit-disabled="!!editingPlan && !revisionReason.trim()" :field-errors="fieldErrors" :initial-draft="editingPlan?.draft" :draft-storage-key="editingPlan ? undefined : planDraftKey" :submit-label="editingPlan ? '保存修订并重新校验' : '保存并校验'" @change="draftPreview = $event" @submit="savePlan" />
+        <PlanForm :key="editingPlan?.id ?? 'new'" :instruments="instruments" :busy="busy" :submit-disabled="!!editingPlan && !revisionReason.trim()" :field-errors="fieldErrors" :initial-draft="editingPlan?.draft" :draft-storage-key="editingPlan ? `plain-rule:plan-revision-draft:v1:${editingPlan.id}` : planDraftKey" :submit-label="editingPlan ? '保存修订并重新校验' : '保存并校验'" @change="draftPreview = $event" @submit="savePlan" />
       </div>
       <aside class="decision-panel">
         <template v-if="selectedPlan || draftPreview">
@@ -174,7 +176,7 @@ onMounted(load)
           <small>{{ plan.draft.quantity }} 股 · 规则 {{ plan.ruleVersionId }} · 有效至 {{ plan.draft.validUntil ? new Date(String(plan.draft.validUntil)).toLocaleString('zh-CN') : '未填写' }}</small>
           <small class="execution-state">{{ executionState(plan) }}</small>
           <button class="button" type="button" @click="startRevision(plan)">修订（保留原记录）</button>
-          <button v-if="plan.status === 'qualified'" class="button button--primary" type="button" @click="startPreTradeConfirmation(plan)">开始开仓前确认</button>
+          <button v-if="plan.status === 'qualified'" class="button button--primary" type="button" :disabled="!!activeCooldown" @click="startPreTradeConfirmation(plan)">{{ activeCooldown ? '冷静期内不可确认' : '开始开仓前确认' }}</button>
         </article>
       </div>
       <p v-else class="calm-note">尚无计划记录。</p>
