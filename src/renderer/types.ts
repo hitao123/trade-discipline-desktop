@@ -90,7 +90,7 @@ export interface ExecutionRecord {
   exitCode?: string
   evidence?: string
   brokerReference?: string
-  emotion: { fearScore: number; greedScore: number; revengeScore: number }
+  emotion: { fearScore: number; greedScore: number; revengeScore: number; state?: 'recorded' | 'unfilled' | 'unknown' }
   executedAt: string
   quickRecord: boolean
 }
@@ -108,7 +108,7 @@ export interface PostTradeReview {
   localPriceMinor: number
   localPriceTenThousandth?: number
   settlementFen: number
-  emotion?: { fearScore: number; greedScore: number; revengeScore: number }
+  emotion?: { fearScore: number; greedScore: number; revengeScore: number; state?: 'recorded' | 'unfilled' | 'unknown' }
   executedAt: string
 }
 

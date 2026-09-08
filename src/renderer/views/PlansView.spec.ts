@@ -26,10 +26,22 @@ describe('PlansView', () => {
     })
   })
 
+  async function openNewPlan() {
+    await fireEvent.click(await screen.findByRole('button', { name: '新建计划' }))
+    await screen.findByLabelText('证券')
+  }
+
+  async function advanceToConfirmation() {
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+  }
+
   it('saves a 150-share HK plan as rejected and explains board lots', async () => {
     render(PlansView)
-    await screen.findByLabelText('证券')
+    await openNewPlan()
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
     await fireEvent.update(screen.getByLabelText('计划股数'), '150')
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
     await fireEvent.click(screen.getByRole('button', { name: '保存并校验' }))
     expect(await screen.findByText('数量必须是当前交易单位的整数倍')).toBeTruthy()
     await waitFor(() => expect(request).toHaveBeenCalledWith('/api/plans', expect.objectContaining({ method: 'POST' })))
@@ -37,9 +49,11 @@ describe('PlansView', () => {
 
   it('includes a key target price range when saving a plan', async () => {
     render(PlansView)
-    await screen.findByLabelText('证券')
+    await openNewPlan()
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
     await fireEvent.update(screen.getByLabelText(/目标退出下限/), '130')
     await fireEvent.update(screen.getByLabelText(/目标退出上限/), '140')
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
     await fireEvent.click(screen.getByRole('button', { name: '保存并校验' }))
     await waitFor(() => expect(request).toHaveBeenCalledWith('/api/plans', expect.objectContaining({ method: 'POST' })))
     const call = request.mock.calls.find(([path, init]) => path === '/api/plans' && init?.method === 'POST')
@@ -96,6 +110,7 @@ describe('PlansView', () => {
     render(PlansView)
     await fireEvent.click(await screen.findByRole('button', { name: '修订（保留原记录）' }))
     await fireEvent.update(screen.getByLabelText('修改原因'), '补充最新财报证据')
+    await advanceToConfirmation()
     await fireEvent.click(screen.getByRole('button', { name: '保存修订并重新校验' }))
     await waitFor(() => expect(request).toHaveBeenCalledWith('/api/plans/plan-1', expect.objectContaining({ method: 'PUT' })))
     const call = request.mock.calls.find(([path]) => path === '/api/plans/plan-1')
@@ -121,6 +136,7 @@ describe('PlansView', () => {
 
     render(PlansView)
     await fireEvent.click(await screen.findByRole('button', { name: '修订（保留原记录）' }))
+    await fireEvent.click(screen.getByRole('button', { name: '下一步' }))
 
     expect((screen.getByLabelText('计划股数') as HTMLInputElement).value).toBe('100')
     expect(screen.queryByText('必须是 100 的整数倍')).toBeNull()
@@ -145,6 +161,7 @@ describe('PlansView', () => {
 
     render(PlansView)
     await fireEvent.click(await screen.findByRole('button', { name: '修订（保留原记录）' }))
+    await advanceToConfirmation()
 
     const submit = screen.getByRole('button', { name: '保存修订并重新校验' }) as HTMLButtonElement
     expect(submit.disabled).toBe(true)

@@ -171,6 +171,31 @@ func TestUnplannedExecutionUpdatesHoldingAndCreatesCooldown(t *testing.T) {
 	}
 }
 
+func TestExecutionEmotionStatePreservesMissingAndUnknownAnswers(t *testing.T) {
+	svc := openExecutionService(t)
+	receipt, err := svc.RecordExecution(context.Background(), ExecutionDraft{
+		InstrumentID: "hk-9988", Side: "buy", Quantity: 100, SettlementFen: -1_205_000,
+		ExecutedAt: time.Date(2026, 8, 12, 7, 0, 0, 0, time.UTC),
+		Emotion:    ExecutionEmotion{State: "unfilled"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var emotionJSON string
+	if err := svc.store.DB().QueryRow(`SELECT emotion_json FROM execution_events WHERE id = ?`, receipt.ID).Scan(&emotionJSON); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(emotionJSON, `"state":"unfilled"`) {
+		t.Fatalf("missing emotion state in stored event: %s", emotionJSON)
+	}
+	if err := validateExecutionEmotion(ExecutionEmotion{State: "unknown", FearScore: 1}); err == nil {
+		t.Fatal("unknown emotion must not be stored with a rating")
+	}
+	if err := validateExecutionEmotion(ExecutionEmotion{}); err != nil {
+		t.Fatalf("legacy emotion payload should remain valid: %v", err)
+	}
+}
+
 func TestSeriousViolationCooldownEscalatesOnSecondAndThirdOccurrence(t *testing.T) {
 	svc := openExecutionService(t)
 	base := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)

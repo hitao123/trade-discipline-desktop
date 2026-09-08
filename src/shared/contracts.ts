@@ -7,6 +7,8 @@ export interface ExecutionEmotion {
   fearScore: number
   greedScore: number
   revengeScore: number
+  /** Empty is a legacy record; it must not be displayed as an explicit zero. */
+  state?: 'recorded' | 'unfilled' | 'unknown'
 }
 
 export interface ApiFieldError {

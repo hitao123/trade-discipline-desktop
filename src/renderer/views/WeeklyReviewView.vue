@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, shallowRef } from 'vue'
+import { computed, onMounted, reactive, shallowRef, watch } from 'vue'
 
 import ErrorNotice from '@/renderer/components/ErrorNotice.vue'
 import PageHeader from '@/renderer/components/PageHeader.vue'
 import PostTradeReviewQueue from '@/renderer/components/reviews/PostTradeReviewQueue.vue'
 import { api } from '@/renderer/lib/api'
 import { dateLocal, formatCNY } from '@/renderer/lib/format'
-import type { Instrument, PostTradeReview } from '@/renderer/types'
+import type { ExecutionRecord, Instrument, PostTradeReview } from '@/renderer/types'
 
 interface Review {
   id: string
@@ -29,14 +29,43 @@ const busy = shallowRef(false)
 const pendingReviews = shallowRef<PostTradeReview[]>([])
 const instruments = shallowRef<Instrument[]>([])
 const busyExecutionId = shallowRef('')
+const allPendingReviews = shallowRef<PostTradeReview[]>([])
+const executions = shallowRef<ExecutionRecord[]>([])
+const showAllPending = shallowRef(false)
 const instrumentNames = computed(() => Object.fromEntries(instruments.value.map(instrument => [instrument.id, `${instrument.code} · ${instrument.name}`])))
+const reviewDraftKey = computed(() => `plain-rule:weekly-review-draft:${form.periodStart}:${form.periodEnd}`)
+const periodExecutions = computed(() => executions.value.filter((execution) => {
+  const day = execution.executedAt.slice(0, 10)
+  return day >= form.periodStart && day <= form.periodEnd
+}))
+const periodViolations = computed(() => pendingReviews.value.length)
+const displayedPendingReviews = computed(() => showAllPending.value ? allPendingReviews.value : pendingReviews.value)
+
+function restoreDraft() {
+  if (review.value) return
+  try {
+    const raw = window.localStorage.getItem(reviewDraftKey.value)
+    if (!raw) return
+    const saved = JSON.parse(raw) as { impulseNotes?: string; nextAllowedAction?: string }
+    form.impulseNotes = saved.impulseNotes ?? ''
+    form.nextAllowedAction = saved.nextAllowedAction ?? ''
+  }
+  catch { /* A damaged local draft should not hide real review facts. */ }
+}
 
 async function loadPeriod() {
   try {
     const loaded = await api.request<Review | null>(`/api/reviews?periodStart=${encodeURIComponent(form.periodStart)}&periodEnd=${encodeURIComponent(form.periodEnd)}`)
     review.value = loaded ?? undefined
-    form.impulseNotes = loaded?.userContent.impulseNotes ?? ''
-    form.nextAllowedAction = loaded?.userContent.nextAllowedAction ?? ''
+    if (loaded) {
+      form.impulseNotes = loaded.userContent.impulseNotes
+      form.nextAllowedAction = loaded.userContent.nextAllowedAction
+    }
+    else {
+      form.impulseNotes = ''
+      form.nextAllowedAction = ''
+      restoreDraft()
+    }
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '复盘加载失败'
@@ -45,11 +74,28 @@ async function loadPeriod() {
 
 async function loadPending() {
   try {
-    pendingReviews.value = await api.request<PostTradeReview[]>(`/api/post-trade-reviews?periodStart=${encodeURIComponent(form.periodStart)}&periodEnd=${encodeURIComponent(form.periodEnd)}`)
+    const loaded = await api.request<PostTradeReview[]>(`/api/post-trade-reviews?periodStart=${encodeURIComponent(form.periodStart)}&periodEnd=${encodeURIComponent(form.periodEnd)}`)
+    pendingReviews.value = Array.isArray(loaded) ? loaded : []
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '待复盘成交加载失败'
   }
+}
+
+async function loadAllPending() {
+  try {
+    const loaded = await api.request<PostTradeReview[]>('/api/post-trade-reviews')
+    allPendingReviews.value = Array.isArray(loaded) ? loaded : []
+  }
+  catch { allPendingReviews.value = [] }
+}
+
+async function loadExecutions() {
+  try {
+    const loaded = await api.request<ExecutionRecord[]>('/api/executions')
+    executions.value = Array.isArray(loaded) ? loaded : []
+  }
+  catch { executions.value = [] }
 }
 
 async function loadInstruments() {
@@ -66,12 +112,22 @@ async function onPeriodChange() {
   await Promise.all([loadPeriod(), loadPending()])
 }
 
+function chooseWeek(offset: number) {
+  const start = new Date(`${form.periodStart}T12:00:00`)
+  start.setDate(start.getDate() + offset * 7)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 6)
+  form.periodStart = dateLocal(start)
+  form.periodEnd = dateLocal(end)
+  void onPeriodChange()
+}
+
 async function completePostTradeReview(executionId: string, note: string) {
   busyExecutionId.value = executionId
   error.value = ''
   try {
     await api.request(`/api/post-trade-reviews/${executionId}/complete`, { method: 'POST', body: JSON.stringify({ note }) })
-    await loadPending()
+    await Promise.all([loadPending(), loadAllPending()])
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '成交复盘保存失败'
@@ -85,6 +141,7 @@ async function submit() {
   busy.value = true
   try {
     review.value = await api.request<Review>('/api/reviews', { method: 'POST', body: JSON.stringify(form) })
+    window.localStorage.removeItem(reviewDraftKey.value)
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '复盘保存失败'
@@ -94,20 +151,29 @@ async function submit() {
   }
 }
 
-onMounted(() => Promise.all([loadPeriod(), loadPending(), loadInstruments()]))
+watch(form, () => {
+  if (review.value) return
+  try { window.localStorage.setItem(reviewDraftKey.value, JSON.stringify({ impulseNotes: form.impulseNotes, nextAllowedAction: form.nextAllowedAction })) }
+  catch { /* Draft persistence is local convenience only. */ }
+}, { deep: true })
+
+onMounted(() => Promise.all([loadPeriod(), loadPending(), loadAllPending(), loadInstruments(), loadExecutions()]))
 </script>
 
 <template>
   <div>
-    <PageHeader eyebrow="REVIEW" title="评价过程，不奖励侥幸" description="合规亏损不会扣结果分，违规盈利不会得到奖励。每周只承诺下一件允许做的事。" />
+    <PageHeader eyebrow="REVIEW" title="每周复盘" description="评价过程，不奖励侥幸。事实来自本地成交、待复盘和持仓记录；草稿只保存在本机。" />
     <ErrorNotice :message="error" />
-    <PostTradeReviewQueue :reviews="pendingReviews" :instrument-names="instrumentNames" :busy-execution-id="busyExecutionId" @complete="completePostTradeReview" />
+    <div class="review-queue-heading"><span>{{ showAllPending ? '全部未完成成交复盘' : '本周期成交复盘' }}</span><button class="text-button" type="button" @click="showAllPending = !showAllPending">{{ showAllPending ? '只看本周期' : `查看跨周全部 ${allPendingReviews.length} 笔` }}</button></div>
+    <PostTradeReviewQueue :reviews="displayedPendingReviews" :instrument-names="instrumentNames" :busy-execution-id="busyExecutionId" @complete="completePostTradeReview" />
     <div class="review-layout">
       <form class="form-stack" @submit.prevent="submit">
+        <div class="week-switch"><button class="button" type="button" @click="chooseWeek(-1)">上周</button><button class="button" type="button" @click="chooseWeek(0)">本周</button><span>切换周期不会覆盖未提交草稿</span></div>
         <div class="field-grid">
           <label class="field"><span>周期开始</span><input v-model="form.periodStart" aria-label="周期开始" type="date" required @change="onPeriodChange" /></label>
           <label class="field"><span>周期结束</span><input v-model="form.periodEnd" aria-label="周期结束" type="date" required @change="onPeriodChange" /></label>
         </div>
+        <section class="period-facts" aria-label="本周期事实摘要"><strong>本周期事实</strong><span>{{ periodExecutions.length }} 笔成交 · {{ periodViolations }} 笔待成交复盘 · {{ allPendingReviews.length }} 笔跨周未完成</span><span v-if="periodExecutions.length">最早成交：{{ new Date(periodExecutions.at(-1)?.executedAt ?? '').toLocaleString('zh-CN') }}</span><span v-else>该周期没有本地成交记录。</span></section>
         <label class="field"><span>冲动与纪律记录</span><textarea v-model="form.impulseNotes" rows="7" placeholder="写事实：当时想做什么，最后按什么规则处理？" /></label>
         <label class="field"><span>下周唯一允许动作</span><textarea v-model="form.nextAllowedAction" rows="3" required placeholder="例如：只跟踪一项可验证证据，不因短期涨跌临时加仓" /></label>
         <p v-if="pendingReviews.length" class="pending-gate">请先完成上方 {{ pendingReviews.length }} 笔成交复盘，再提交本周复盘。</p>
@@ -125,13 +191,15 @@ onMounted(() => Promise.all([loadPeriod(), loadPending(), loadInstruments()]))
           </dl>
           <blockquote>{{ review.userContent.nextAllowedAction }}</blockquote>
         </template>
-        <span v-else>切换周期可回看已提交内容</span>
+        <span v-else>尚未正式提交；本机草稿会在返回此周期时恢复。</span>
+        <button v-if="allPendingReviews.length" class="text-button" type="button" @click="showAllPending = true">查看全部 {{ allPendingReviews.length }} 笔跨周待复盘</button>
       </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.review-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; }.form-stack { display: grid; gap: 16px; }.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }.score-panel { padding: 22px; border-top: 3px solid var(--ink); background: var(--paper-deep); }.score-panel > p { margin: 0; color: var(--ink-faint); font-size: 11px; }.score-panel > strong { display: block; margin-top: 15px; font-family: var(--font-serif); font-size: 64px; font-weight: 500; line-height: 1; }.score-panel > span { color: var(--ink-muted); font-size: 12px; }.score-panel dl { margin: 24px 0; }.score-panel dl div { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }.score-panel dd { margin: 0; }.score-panel blockquote { margin: 0; padding: 14px; color: var(--ink-muted); border-left: 2px solid var(--accent); background: var(--paper); font-size: 12px; line-height: 1.7; }
+.review-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; }.form-stack { display: grid; gap: 16px; }.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }.week-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }.week-switch span { margin-left: 6px; color: var(--ink-muted); font-size: 12px; }.period-facts { display: grid; gap: 6px; padding: 15px; border-left: 3px solid var(--ink); background: var(--paper-deep); }.period-facts strong { font-size: 13px; }.period-facts span { color: var(--ink-muted); font-size: 12px; }.score-panel { display: grid; gap: 10px; padding: 22px; border-top: 3px solid var(--ink); background: var(--paper-deep); }.score-panel > p { margin: 0; color: var(--ink-faint); font-size: 11px; }.score-panel > strong { display: block; margin-top: 15px; font-family: var(--font-serif); font-size: 64px; font-weight: 500; line-height: 1; }.score-panel > span { color: var(--ink-muted); font-size: 12px; }.score-panel dl { margin: 14px 0; }.score-panel dl div { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }.score-panel dd { margin: 0; }.score-panel blockquote { margin: 0; padding: 14px; color: var(--ink-muted); border-left: 2px solid var(--accent); background: var(--paper); font-size: 12px; line-height: 1.7; }
+.review-queue-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 16px 0 -10px; color: var(--ink-muted); font-size: 13px; }
 .pending-gate { margin: 0; color: var(--accent); font-size: 12px; }
 </style>

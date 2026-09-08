@@ -21,6 +21,7 @@ const form = reactive({
   instrumentId: '', side: 'buy' as 'buy' | 'sell', quantity: 1, localPrice: 0,
   settlementYuan: 0, executedAt: dateTimeLocal(), reason: '', planId: '', exitCode: '', evidence: '', brokerReference: '',
   fearScore: 0, greedScore: 0, revengeScore: 0,
+  emotionState: 'unfilled' as 'recorded' | 'unfilled' | 'unknown',
 })
 const selected = computed(() => props.instruments.find(item => item.id === form.instrumentId))
 const priceStep = computed(() => selected.value?.assetType === 'etf' ? 0.001 : 0.01)
@@ -41,6 +42,7 @@ watch(() => props.record, (record) => {
   form.fearScore = record.emotion.fearScore
   form.greedScore = record.emotion.greedScore
   form.revengeScore = record.emotion.revengeScore
+  form.emotionState = record.emotion.state ?? 'unfilled'
 }, { immediate: true })
 
 function submit() {
@@ -57,7 +59,9 @@ function submit() {
       localAmountMinor: Math.round(localPrice * quantity * 100), settlementFen,
       executedAt: new Date(form.executedAt).toISOString(), planId: form.planId || undefined,
       exitCode: form.exitCode, evidence: form.evidence, brokerReference: form.brokerReference,
-      emotion: { fearScore: Number(form.fearScore), greedScore: Number(form.greedScore), revengeScore: Number(form.revengeScore) },
+      emotion: form.emotionState === 'recorded'
+        ? { state: 'recorded', fearScore: Number(form.fearScore), greedScore: Number(form.greedScore), revengeScore: Number(form.revengeScore) }
+        : { state: form.emotionState, fearScore: 0, greedScore: 0, revengeScore: 0 },
     },
   })
 }
@@ -78,7 +82,8 @@ function submit() {
       <label class="field"><span>券商实际人民币扣款/到账（元）</span><input v-model.number="form.settlementYuan" type="number" min="0.01" step="0.01" required /></label>
       <label class="field"><span>成交时间</span><input v-model="form.executedAt" type="datetime-local" step="1" required /></label>
     </div>
-    <div class="emotion-grid">
+    <div class="emotion-state" role="radiogroup" aria-label="情绪记录状态"><label><input v-model="form.emotionState" type="radio" value="unfilled" />未填写</label><label><input v-model="form.emotionState" type="radio" value="recorded" />如实评分</label><label><input v-model="form.emotionState" type="radio" value="unknown" />记不清</label></div>
+    <div v-if="form.emotionState === 'recorded'" class="emotion-grid">
       <label class="field"><span>恐惧 0–10</span><input v-model.number="form.fearScore" type="number" min="0" max="10" step="1" /></label>
       <label class="field"><span>贪婪 0–10</span><input v-model.number="form.greedScore" type="number" min="0" max="10" step="1" /></label>
       <label class="field"><span>回本/报复性冲动 0–10</span><input v-model.number="form.revengeScore" type="number" min="0" max="10" step="1" /></label>
@@ -96,5 +101,6 @@ function submit() {
 .correction__note { margin: 0; color: var(--ink-muted); font-size: 11px; }
 .correction__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .emotion-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.emotion-state { display: flex; flex-wrap: wrap; gap: 14px; }.emotion-state label { display: flex; align-items: center; gap: 6px; font-size: 12px; }.emotion-state input { width: auto; }
 @media (max-width: 900px) { .correction__grid, .emotion-grid { grid-template-columns: 1fr; } }
 </style>

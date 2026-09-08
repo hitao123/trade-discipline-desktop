@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, shallowRef, watch } from 'vue'
 
 import { preferredInstrumentId } from '@/renderer/lib/plan-options'
 import { dateTimeLocal } from '@/renderer/lib/format'
 import type { Instrument } from '@/renderer/types'
 
-const props = defineProps<{ instruments: Instrument[]; busy: boolean; submitDisabled?: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string; preferredInstrumentId?: string }>()
-const emit = defineEmits<{ submit: [payload: Record<string, unknown>] }>()
+const props = defineProps<{ instruments: Instrument[]; busy: boolean; submitDisabled?: boolean; fieldErrors: Record<string, string>; initialDraft: Record<string, unknown> | undefined; submitLabel?: string; preferredInstrumentId?: string; draftStorageKey?: string | undefined }>()
+const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; change: [payload: Record<string, unknown>] }>()
+const currentStep = shallowRef(1)
 
 const now = new Date()
 const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
@@ -47,7 +48,7 @@ watch(() => form.instrumentId, (id, previous) => {
   }
 })
 
-watch(() => props.initialDraft, (draft) => {
+function applyDraft(draft: Record<string, unknown>) {
   if (!draft) return
   form.instrumentId = String(draft.instrumentId ?? '')
   form.thesis = String(draft.thesis ?? '')
@@ -72,10 +73,30 @@ watch(() => props.initialDraft, (draft) => {
   form.revengeScore = Number(draft.revengeScore ?? 0)
   if (draft.referencePriceAt) form.referencePriceAt = dateTimeLocal(new Date(String(draft.referencePriceAt)))
   if (draft.validUntil) form.validUntil = dateTimeLocal(new Date(String(draft.validUntil)))
+}
+
+watch(() => props.initialDraft, (draft) => {
+  if (draft) applyDraft(draft)
+  else if (props.draftStorageKey) {
+    try {
+      const saved = window.localStorage.getItem(props.draftStorageKey)
+      if (saved) applyDraft(JSON.parse(saved) as Record<string, unknown>)
+    }
+    catch { /* A blocked or malformed local draft must not prevent plan creation. */ }
+  }
 }, { immediate: true })
 
-function submit() {
-  emit('submit', {
+watch(form, () => {
+  const next = payload()
+  emit('change', next)
+  if (props.draftStorageKey) {
+    try { window.localStorage.setItem(props.draftStorageKey, JSON.stringify(next)) }
+    catch { /* Local draft persistence is best effort and never replaces saved records. */ }
+  }
+}, { deep: true })
+
+function payload() {
+  return {
     instrumentId: form.instrumentId,
     thesis: form.thesis,
     falsification: form.falsification,
@@ -97,13 +118,18 @@ function submit() {
     revengeScore: Number(form.revengeScore),
     referencePriceAt: new Date(form.referencePriceAt).toISOString(),
     validUntil: new Date(form.validUntil).toISOString(),
-  })
+  }
+}
+
+function submit() {
+  emit('submit', payload())
 }
 </script>
 
 <template>
   <form class="form-stack" novalidate @submit.prevent="submit">
-    <fieldset>
+    <p class="step-indicator" aria-live="polite">第 {{ currentStep }} / 3 步：{{ currentStep === 1 ? '判断' : currentStep === 2 ? '仓位与风险' : '确认' }}</p>
+    <fieldset v-show="currentStep === 1">
       <legend>01 · 判断</legend>
       <label class="field"><span>证券</span><select v-model="form.instrumentId" aria-label="证券"><option v-for="instrument in instruments" :key="instrument.id" :value="instrument.id">{{ instrument.code }} · {{ instrument.name }} · 每手 {{ instrument.lotSize }}</option></select></label>
       <label class="field"><span>一句话买入逻辑</span><textarea v-model="form.thesis" rows="2" required /><small>{{ fieldErrors.thesis }}</small></label>
@@ -119,7 +145,7 @@ function submit() {
       <label class="field"><span>目标或估值退出条件</span><textarea v-model="form.exitCondition" rows="2" required /></label>
     </fieldset>
 
-    <fieldset>
+    <fieldset v-show="currentStep === 2">
       <legend>02 · 仓位与风险</legend>
       <div class="field-grid field-grid--three">
         <label class="field"><span>买入下限（本币）</span><input v-model.number="form.entryLow" aria-label="买入下限（本币）" type="number" min="0" step="0.01" required /></label>
@@ -142,7 +168,7 @@ function submit() {
       </div>
     </fieldset>
 
-    <fieldset>
+    <fieldset v-show="currentStep === 3">
       <legend>03 · 当时的情绪</legend>
       <div class="field-grid field-grid--three">
         <label class="field"><span>害怕 0–10</span><input v-model.number="form.fearScore" type="number" min="0" max="10" /></label>
@@ -151,16 +177,22 @@ function submit() {
       </div>
     </fieldset>
 
-    <button class="button button--primary" type="submit" :disabled="busy || submitDisabled">{{ busy ? '正在校验…' : (submitLabel ?? '保存并校验') }}</button>
+    <div class="step-actions">
+      <button v-if="currentStep > 1" class="button" type="button" @click="currentStep -= 1">上一步</button>
+      <button v-if="currentStep < 3" class="button button--primary" type="button" @click="currentStep += 1">下一步</button>
+      <button v-else class="button button--primary" type="submit" :disabled="busy || submitDisabled">{{ busy ? '正在校验…' : (submitLabel ?? '保存并校验') }}</button>
+    </div>
   </form>
 </template>
 
 <style scoped>
 .form-stack { display: grid; gap: 24px; }
+.step-indicator { margin: 0; color: var(--ink-muted); font-size: 13px; font-weight: 650; }
 fieldset { display: grid; gap: 15px; margin: 0; padding: 20px; border: 1px solid var(--line); }
 legend { padding: 0 8px; color: var(--ink-muted); font-size: 12px; font-weight: 750; letter-spacing: .08em; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .field-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field small { min-height: 14px; color: var(--accent); }
 .field .field__hint { color: var(--ink-faint); }
+.step-actions { display: flex; justify-content: space-between; gap: 12px; }.step-actions .button--primary { margin-left: auto; }
 </style>

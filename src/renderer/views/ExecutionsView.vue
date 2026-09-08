@@ -136,17 +136,20 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader eyebrow="RECORD" title="记录事实，不替过去找理由" description="违规成交也必须完整保存。系统会更新真实持仓，并同时生成违规、冷静期和审计记录。" />
+    <PageHeader eyebrow="RECORD" title="成交补录" description="记录事实，不替过去找理由。违规成交也必须完整保存，并同时生成纪律、冷静期和审计记录。" />
     <ErrorNotice :message="error" />
 	<div class="entry-tabs" role="tablist" aria-label="补录方式">
 	  <button type="button" :class="{ active: entryMode === 'quick' }" @click="entryMode = 'quick'">极速留痕</button>
 	  <button type="button" :class="{ active: entryMode === 'full' }" @click="entryMode = 'full'">完整补录</button>
 	</div>
-    <div class="execution-layout">
+	<div class="execution-layout">
 	  <div v-if="entryMode === 'quick'" class="quick-entry">
-        <InstrumentRegister @registered="includeResolvedInstrument" />
         <ExecutionScreenshotImport :instruments="instruments" @instrument-resolved="includeResolvedInstrument" @prefill="screenshotPrefill = $event" />
         <QuickExecutionForm :key="formEpoch" :instruments="instruments" :plans="plans" :busy="busy" :prefill="screenshotPrefill" :preferred-instrument-id="lastInstrumentId" @submit="recordQuick" />
+        <details class="instrument-add">
+          <summary>找不到证券？搜索后仍无结果时添加本地证券</summary>
+          <InstrumentRegister @registered="includeResolvedInstrument" />
+        </details>
       </div>
       <ExecutionForm v-else :key="`full-${formEpoch}`" :instruments="instruments" :plans="plans" :busy="busy" :preferred-instrument-id="lastInstrumentId" @submit="record" />
       <aside v-if="receipt" class="receipt" :class="{ 'receipt--violation': receipt.classification === 'serious_violation' }">
@@ -168,6 +171,7 @@ onMounted(load)
 <style scoped>
 .execution-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
 .quick-entry { display: grid; gap: 16px; min-width: 0; }
+.instrument-add { padding: 12px 0 0; border-top: 1px solid var(--line); color: var(--ink-muted); font-size: 12px; }.instrument-add summary { cursor: pointer; font-weight: 650; }.instrument-add :deep(.instrument-register) { margin-top: 12px; }
 .entry-tabs { display: flex; gap: 18px; margin: 0 0 20px; border-bottom: 1px solid var(--line); }.entry-tabs button { padding: 9px 1px; color: var(--ink-faint); border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer; }.entry-tabs button.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
 .receipt { padding: 22px; border-top: 3px solid #617158; background: var(--paper-deep); }
 .receipt--violation { border-top-color: var(--accent); }

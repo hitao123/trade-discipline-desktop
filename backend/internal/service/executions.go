@@ -262,6 +262,15 @@ func (s *Service) CorrectExecution(ctx context.Context, originalID, reason strin
 }
 
 func validateExecutionEmotion(emotion ExecutionEmotion) error {
+	if emotion.State != "" && emotion.State != "recorded" && emotion.State != "unfilled" && emotion.State != "unknown" {
+		return fmt.Errorf("情绪记录状态无效")
+	}
+	if emotion.State == "unfilled" || emotion.State == "unknown" {
+		if emotion.FearScore != 0 || emotion.GreedScore != 0 || emotion.RevengeScore != 0 {
+			return fmt.Errorf("未填写或记不清的情绪不能同时保存评分")
+		}
+		return nil
+	}
 	for label, value := range map[string]int{"恐惧": emotion.FearScore, "贪婪": emotion.GreedScore, "回本/报复性冲动": emotion.RevengeScore} {
 		if value < 0 || value > 10 {
 			return fmt.Errorf("%s评分必须在 0 到 10 之间", label)
