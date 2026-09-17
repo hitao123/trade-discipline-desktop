@@ -1,0 +1,72 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-macos:
+    name: Build and release macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release version
+        run: |
+          expected_tag="v$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "$expected_tag"
+
+      - name: Run tests and type checks
+        run: |
+          pnpm test:go
+          pnpm test
+          pnpm typecheck
+
+      - name: Build macOS arm64 installer
+        run: pnpm build:mac
+
+      - name: Generate checksum
+        run: shasum -a 256 release/*.dmg > release/SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/*.dmg \
+            release/*.dmg.blockmap \
+            release/SHA256SUMS.txt \
+            --verify-tag \
+            --generate-notes \
+            --title "Plain Rule $GITHUB_REF_NAME"
