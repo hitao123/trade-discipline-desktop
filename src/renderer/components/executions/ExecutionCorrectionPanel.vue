@@ -42,7 +42,7 @@ watch(() => props.record, (record) => {
   form.fearScore = record.emotion.fearScore
   form.greedScore = record.emotion.greedScore
   form.revengeScore = record.emotion.revengeScore
-  form.emotionState = record.emotion.state ?? 'unfilled'
+  form.emotionState = record.emotion.state ?? 'recorded'
 }, { immediate: true })
 
 function submit() {

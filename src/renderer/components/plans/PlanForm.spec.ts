@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
 import PlanForm from './PlanForm.vue'
@@ -53,11 +53,20 @@ describe('PlanForm', () => {
     })
 
     await fireEvent.update(await screen.findByLabelText('参考价时间'), '')
+    await fireEvent.update(screen.getByLabelText('计划有效期'), '')
     await fireEvent.update(screen.getByLabelText('一句话买入逻辑'), '日期稍后补全')
 
     expect(JSON.parse(drafts.get('plan-draft') ?? '{}')).toMatchObject({
       thesis: '日期稍后补全',
       referencePriceAt: '',
+      validUntil: '',
     })
+
+    cleanup()
+    render(PlanForm, {
+      props: { instruments: [alibaba], busy: false, fieldErrors: {}, initialDraft: undefined, draftStorageKey: 'plan-draft' },
+    })
+    expect(await screen.findByLabelText('参考价时间')).toHaveValue('')
+    expect(screen.getByLabelText('计划有效期')).toHaveValue('')
   })
 })

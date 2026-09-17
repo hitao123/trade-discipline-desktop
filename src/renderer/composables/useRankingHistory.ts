@@ -23,7 +23,6 @@ export function useRankingHistory(options: { request?: Requester } = {}) {
   }
 
   async function loadComparison(nextKind: RankingKind, chosen: string | undefined, version: number) {
-    comparison.value = undefined
     if (!chosen) {
       comparison.value = noHistoryComparison()
       return
@@ -37,7 +36,6 @@ export function useRankingHistory(options: { request?: Requester } = {}) {
     const version = ++requestVersion
     loading.value = true
     error.value = ''
-    comparison.value = undefined
     try {
       const dateData = await request(`/api/market/rankings/dates?kind=${nextKind}`) as RankingDatesResult
       if (version !== requestVersion) return
@@ -57,7 +55,6 @@ export function useRankingHistory(options: { request?: Requester } = {}) {
     const version = ++requestVersion
     loading.value = true
     error.value = ''
-    comparison.value = undefined
     try {
       const dateData = await request(`/api/market/rankings/dates?kind=${nextKind}`) as RankingDatesResult
       if (version !== requestVersion) return false

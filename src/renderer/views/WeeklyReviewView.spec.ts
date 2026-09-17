@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/renderer/lib/api'
@@ -123,11 +124,57 @@ describe('WeeklyReviewView', () => {
     await Promise.resolve()
     await Promise.resolve()
     await fireEvent.click(screen.getByRole('button', { name: '上周' }))
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.runAllTimersAsync()
+    await waitFor(() => expect(screen.getByLabelText('周期开始')).toHaveValue('2026-08-17'))
     await fireEvent.update(screen.getByPlaceholderText('写事实：当时想做什么，最后按什么规则处理？'), '加载失败后继续编辑 A')
+    await nextTick()
 
     expect(JSON.parse(drafts.get('plain-rule:weekly-review-draft:2026-08-10:2026-08-16') ?? '{}')).toMatchObject({ impulseNotes: '上周草稿 B' })
     expect(JSON.parse(drafts.get('plain-rule:weekly-review-draft:2026-08-17:2026-08-23') ?? '{}')).toMatchObject({ impulseNotes: '加载失败后继续编辑 A' })
+    expect(screen.getByLabelText('周期开始')).toHaveValue('2026-08-17')
+    expect(screen.getByRole('button', { name: '提交每周复盘' })).toBeEnabled()
+  })
+
+  it('keeps another period draft when a delayed review submission succeeds', async () => {
+    let resolveSubmission: ((review: Record<string, unknown>) => void) | undefined
+    const drafts = new Map<string, string>()
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => drafts.get(key) ?? null,
+        setItem: (key: string, value: string) => { drafts.set(key, value) },
+        removeItem: (key: string) => { drafts.delete(key) },
+      },
+    })
+    const request = vi.spyOn(api, 'request').mockImplementation((path, init) => {
+      if (path === '/api/reviews' && init?.method === 'POST') return new Promise(resolve => { resolveSubmission = resolve as (review: Record<string, unknown>) => void })
+      if (path.startsWith('/api/reviews')) return Promise.resolve(null)
+      if (path === '/api/instruments' || path === '/api/executions') return Promise.resolve([])
+      if (path.startsWith('/api/post-trade-reviews')) return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    render(WeeklyReviewView)
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    const start = (screen.getByLabelText('周期开始') as HTMLInputElement).value
+    const end = (screen.getByLabelText('周期结束') as HTMLInputElement).value
+    const submittedKey = `plain-rule:weekly-review-draft:${start}:${end}`
+    const previousStart = new Date(`${start}T12:00:00`)
+    previousStart.setDate(previousStart.getDate() - 7)
+    const previousEnd = new Date(`${end}T12:00:00`)
+    previousEnd.setDate(previousEnd.getDate() - 7)
+    const previousKey = `plain-rule:weekly-review-draft:${previousStart.toISOString().slice(0, 10)}:${previousEnd.toISOString().slice(0, 10)}`
+    drafts.set(previousKey, JSON.stringify({ impulseNotes: '上周草稿 B', nextAllowedAction: '保留' }))
+    await fireEvent.update(screen.getByPlaceholderText('写事实：当时想做什么，最后按什么规则处理？'), '本周草稿 A')
+    await fireEvent.update(screen.getByPlaceholderText('例如：只跟踪一项可验证证据，不因短期涨跌临时加仓'), '本周动作')
+    await fireEvent.click(screen.getByRole('button', { name: '提交每周复盘' }))
+
+    expect(screen.getByRole('button', { name: '上周' })).toBeDisabled()
+    expect(request).toHaveBeenCalledWith('/api/reviews', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ periodStart: start, periodEnd: end, impulseNotes: '本周草稿 A', nextAllowedAction: '本周动作' }),
+    }))
+    resolveSubmission?.({ id: 'review-a', periodStart: start, periodEnd: end, disciplineScoreBP: 8000, metrics: { cashFen: 0, chinaTechExposureFen: 0, cumulativeLossFen: 0, violationCount: 0 }, userContent: { impulseNotes: '本周草稿 A', nextAllowedAction: '本周动作' } })
+    await waitFor(() => expect(drafts.has(submittedKey)).toBe(false))
+    expect(JSON.parse(drafts.get(previousKey) ?? '{}')).toMatchObject({ impulseNotes: '上周草稿 B' })
   })
 })

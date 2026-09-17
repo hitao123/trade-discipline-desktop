@@ -74,8 +74,8 @@ function applyDraft(draft: Record<string, unknown>) {
   form.fearScore = Number(draft.fearScore ?? 0)
   form.greedScore = Number(draft.greedScore ?? 0)
   form.revengeScore = Number(draft.revengeScore ?? 0)
-  if (draft.referencePriceAt) form.referencePriceAt = dateTimeLocal(new Date(String(draft.referencePriceAt)))
-  if (draft.validUntil) form.validUntil = dateTimeLocal(new Date(String(draft.validUntil)))
+  if (Object.hasOwn(draft, 'referencePriceAt')) form.referencePriceAt = restoreDate(draft.referencePriceAt)
+  if (Object.hasOwn(draft, 'validUntil')) form.validUntil = restoreDate(draft.validUntil)
   restoringDraft.value = false
 }
 
@@ -131,6 +131,12 @@ function payload() {
 function serializeDate(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toISOString()
+}
+
+function restoreDate(value: unknown) {
+  if (value === '') return ''
+  const date = new Date(String(value))
+  return Number.isNaN(date.getTime()) ? '' : dateTimeLocal(date)
 }
 
 function submit() {

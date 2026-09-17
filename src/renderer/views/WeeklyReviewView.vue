@@ -35,6 +35,7 @@ const showAllPending = shallowRef(false)
 const draftPeriod = shallowRef({ periodStart: form.periodStart, periodEnd: form.periodEnd })
 const switchingPeriod = shallowRef(false)
 const instrumentNames = computed(() => Object.fromEntries(instruments.value.map(instrument => [instrument.id, `${instrument.code} · ${instrument.name}`])))
+const isDraftPeriodCurrent = computed(() => form.periodStart === draftPeriod.value.periodStart && form.periodEnd === draftPeriod.value.periodEnd)
 const reviewDraftKey = computed(() => draftKey(draftPeriod.value))
 const periodExecutions = computed(() => executions.value.filter((execution) => {
   const day = execution.executedAt.slice(0, 10)
@@ -132,9 +133,14 @@ async function onPeriodChange() {
     const [periodLoaded] = await Promise.all([loadPeriod(period), loadPending(period)])
     if (periodLoaded && form.periodStart === period.periodStart && form.periodEnd === period.periodEnd)
       draftPeriod.value = period
+    else if (!periodLoaded && form.periodStart === period.periodStart && form.periodEnd === period.periodEnd) {
+      form.periodStart = draftPeriod.value.periodStart
+      form.periodEnd = draftPeriod.value.periodEnd
+      void loadPending(draftPeriod.value)
+    }
   }
   finally {
-    if (form.periodStart === period.periodStart && form.periodEnd === period.periodEnd)
+    if ((form.periodStart === period.periodStart && form.periodEnd === period.periodEnd) || isDraftPeriodCurrent.value)
       switchingPeriod.value = false
   }
 }
@@ -167,10 +173,24 @@ async function completePostTradeReview(executionId: string, note: string) {
 }
 
 async function submit() {
+  if (!isDraftPeriodCurrent.value || switchingPeriod.value) {
+    error.value = '当前周期尚未成功读取，不能提交其他周期的草稿。'
+    return
+  }
+  const submittedPeriod = { periodStart: form.periodStart, periodEnd: form.periodEnd }
+  const submittedDraftKey = draftKey(submittedPeriod)
+  const submittedContent = {
+    periodStart: submittedPeriod.periodStart,
+    periodEnd: submittedPeriod.periodEnd,
+    impulseNotes: form.impulseNotes,
+    nextAllowedAction: form.nextAllowedAction,
+  }
   busy.value = true
   try {
-    review.value = await api.request<Review>('/api/reviews', { method: 'POST', body: JSON.stringify(form) })
-    window.localStorage.removeItem(draftKey({ periodStart: form.periodStart, periodEnd: form.periodEnd }))
+    const saved = await api.request<Review>('/api/reviews', { method: 'POST', body: JSON.stringify(submittedContent) })
+    window.localStorage.removeItem(submittedDraftKey)
+    if (form.periodStart === submittedPeriod.periodStart && form.periodEnd === submittedPeriod.periodEnd)
+      review.value = saved
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '复盘保存失败'
@@ -195,16 +215,16 @@ onMounted(() => Promise.all([loadPeriod(draftPeriod.value), loadPending(draftPer
     <PostTradeReviewQueue :reviews="displayedPendingReviews" :instrument-names="instrumentNames" :busy-execution-id="busyExecutionId" @complete="completePostTradeReview" />
     <div class="review-layout">
       <form class="form-stack" @submit.prevent="submit">
-        <div class="week-switch"><button class="button" type="button" @click="chooseWeek(-1)">上周</button><button class="button" type="button" @click="chooseWeek(0)">本周</button><span>切换周期不会覆盖未提交草稿</span></div>
+        <div class="week-switch"><button class="button" type="button" :disabled="busy || switchingPeriod" @click="chooseWeek(-1)">上周</button><button class="button" type="button" :disabled="busy || switchingPeriod" @click="chooseWeek(0)">本周</button><span>切换周期不会覆盖未提交草稿</span></div>
         <div class="field-grid">
-          <label class="field"><span>周期开始</span><input v-model="form.periodStart" aria-label="周期开始" type="date" required @change="onPeriodChange" /></label>
-          <label class="field"><span>周期结束</span><input v-model="form.periodEnd" aria-label="周期结束" type="date" required @change="onPeriodChange" /></label>
+          <label class="field"><span>周期开始</span><input v-model="form.periodStart" aria-label="周期开始" type="date" required :disabled="busy || switchingPeriod" @change="onPeriodChange" /></label>
+          <label class="field"><span>周期结束</span><input v-model="form.periodEnd" aria-label="周期结束" type="date" required :disabled="busy || switchingPeriod" @change="onPeriodChange" /></label>
         </div>
         <section class="period-facts" aria-label="本周期事实摘要"><strong>本周期事实</strong><span>{{ periodExecutions.length }} 笔成交 · {{ periodViolations }} 笔待成交复盘 · {{ allPendingReviews.length }} 笔跨周未完成</span><span v-if="periodExecutions.length">最早成交：{{ new Date(periodExecutions.at(-1)?.executedAt ?? '').toLocaleString('zh-CN') }}</span><span v-else>该周期没有本地成交记录。</span></section>
-        <label class="field"><span>冲动与纪律记录</span><textarea v-model="form.impulseNotes" rows="7" placeholder="写事实：当时想做什么，最后按什么规则处理？" /></label>
-        <label class="field"><span>下周唯一允许动作</span><textarea v-model="form.nextAllowedAction" rows="3" required placeholder="例如：只跟踪一项可验证证据，不因短期涨跌临时加仓" /></label>
+        <label class="field"><span>冲动与纪律记录</span><textarea v-model="form.impulseNotes" rows="7" placeholder="写事实：当时想做什么，最后按什么规则处理？" :disabled="busy || switchingPeriod" /></label>
+        <label class="field"><span>下周唯一允许动作</span><textarea v-model="form.nextAllowedAction" rows="3" required placeholder="例如：只跟踪一项可验证证据，不因短期涨跌临时加仓" :disabled="busy || switchingPeriod" /></label>
         <p v-if="pendingReviews.length" class="pending-gate">请先完成上方 {{ pendingReviews.length }} 笔成交复盘，再提交本周复盘。</p>
-        <button class="button button--primary" type="submit" :disabled="busy || pendingReviews.length > 0">{{ busy ? '提交中…' : pendingReviews.length ? '先完成成交复盘' : '提交每周复盘' }}</button>
+        <button class="button button--primary" type="submit" :disabled="busy || switchingPeriod || !isDraftPeriodCurrent || pendingReviews.length > 0">{{ busy ? '提交中…' : switchingPeriod ? '正在读取周期…' : pendingReviews.length ? '先完成成交复盘' : '提交每周复盘' }}</button>
       </form>
       <aside class="score-panel">
         <p>{{ review ? `${review.periodStart} 至 ${review.periodEnd}` : '当前周期尚未提交' }}</p>

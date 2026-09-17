@@ -68,4 +68,24 @@ describe('useRankingHistory', () => {
     expect(ranking.comparison.value?.snapshot?.version).toBe(2)
     expect(request).toHaveBeenCalledTimes(4)
   })
+
+  it('keeps the previous ranking visible until the next date has loaded', async () => {
+    let resolveComparison: ((value: ReturnType<typeof comparison>) => void) | undefined
+    const request = vi.fn((path: string) => {
+      if (path.includes('dates?kind=stock')) return Promise.resolve({ ...stockDates, dates: [stockDates.dates[0], { tradeDate: '2026-08-04', quality: 'verified_close' as const }] })
+      if (path.includes('date=2026-08-12')) return Promise.resolve(comparison('stock', 1))
+      return new Promise(resolve => { resolveComparison = resolve as (value: ReturnType<typeof comparison>) => void })
+    })
+    const ranking = useRankingHistory({ request })
+
+    await ranking.load('stock')
+    const loadingPrevious = ranking.selectDate('2026-08-04')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(ranking.comparison.value?.snapshot?.version).toBe(1)
+    expect(resolveComparison).toBeTypeOf('function')
+    resolveComparison?.(comparison('stock', 2))
+    await loadingPrevious
+    expect(ranking.comparison.value?.snapshot?.version).toBe(2)
+  })
 })
