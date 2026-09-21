@@ -14,7 +14,7 @@
     "build:electron": "node scripts/build-electron.mjs",
     "build": "pnpm build:backend && pnpm build:ocr && pnpm build:renderer && pnpm build:electron",
     "start": "pnpm build && electron .",
-    "build:mac": "pnpm build && electron-builder --mac dmg --arm64",
+    "build:mac": "pnpm build && electron-builder --mac dmg --arm64 --publish never",
     "smoke:mac": "zsh scripts/smoke-macos.sh",
     "test:go": "node scripts/test-backend.mjs",
     "test": "vitest run",

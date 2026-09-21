@@ -54,7 +54,7 @@ jobs:
           pnpm typecheck
 
       - name: Build macOS arm64 installer
-        run: pnpm build:mac
+        run: pnpm build && pnpm exec electron-builder --mac dmg --arm64 --publish never
 
       - name: Generate checksum
         run: shasum -a 256 release/*.dmg > release/SHA256SUMS.txt
